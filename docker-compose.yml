@@ -1,0 +1,11 @@
+services:
+  exam-checker:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./:/app:ro
+      - ./data:/data:ro
+      - ./output:/output
+    environment:
+      EXAM_CHECKER_RENDER_DPI: ${EXAM_CHECKER_RENDER_DPI:-160}
+    entrypoint: ["python", "-m", "exam_checker.cli"]

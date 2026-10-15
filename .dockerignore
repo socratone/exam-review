@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+.env
+.env.*
+*.toml.secret
+.modal.toml
+modal.toml
+data
+output
+tests
