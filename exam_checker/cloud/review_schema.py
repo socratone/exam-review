@@ -1,4 +1,4 @@
-"""Single-page, unverified AI review contracts (Phase 5)."""
+"""Single-page, unverified AI review contracts."""
 import re
 from typing import Literal
 

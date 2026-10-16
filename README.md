@@ -2,14 +2,14 @@
 
 CLI 실행부터 로컬 전처리, Modal 추론, 결과 저장까지의 흐름과 Mermaid 차트는 [CLI 실행 흐름](docs/cli-flow.md)을 참고하세요.
 
-시험지 PDF를 로컬 CPU에서 전처리하는 CLI입니다. 현재 Phase 1·2 전처리, Phase 4 GPU 연결 검사, Phase 5 첫 페이지 AI 검토를 구현했습니다.
+시험지 PDF를 로컬 CPU에서 전처리하는 CLI입니다. 로컬 PDF 전처리, Modal GPU 연결 검사, Qwen 첫 페이지 AI 검토를 지원합니다.
 
 - PDF 경로·형식·암호 보호 여부 검증
 - 페이지별 텍스트 추출과 PNG 렌더링 (기본 160 DPI)
 - 텍스트가 부족한 페이지 표시
 - 성공·오류 종료 시 임시 이미지 정리
 
-기본 실행은 전처리 요약만 출력합니다. `--review`로 첫 페이지를 Qwen으로 검토하고 JSON을 저장할 수 있습니다. 문항 분할, 정답 키 검증, 의심 항목 재검증, 전체 시험지 검토와 Markdown 보고서는 후속 단계입니다. OCR은 실행하지 않습니다. 영숫자·한글 등 문자/숫자가 20자 미만인 페이지를 시각 검토 대상으로 표시하며, 이는 스캔 여부의 확정 판정은 아닙니다.
+기본 실행은 전처리 요약만 출력합니다. `--review`로 첫 페이지를 Qwen으로 검토하고 JSON을 저장할 수 있습니다. 문항 분할, 정답 키 검증, 의심 항목 재검증, 전체 시험지 검토와 Markdown 보고서는 지원하지 않습니다. OCR은 실행하지 않습니다. 영숫자·한글 등 문자/숫자가 20자 미만인 페이지를 시각 검토 대상으로 표시하며, 이는 스캔 여부의 확정 판정은 아닙니다.
 
 ## Docker Compose 실행
 
@@ -47,7 +47,7 @@ uv run pytest
 
 PyMuPDF의 공식 [텍스트 추출 및 이미지 렌더링 API](https://pymupdf.readthedocs.io/en/latest/page.html)를 사용합니다. 로컬 AI 모델은 실행하지 않습니다.
 
-## Modal GPU 연결 검사 (Phase 4)
+## Modal GPU 연결 검사
 
 `--modal-check`는 첫 페이지의 텍스트와 PNG만 Modal로 보내고 실제 CUDA 연산 `2² = 4`를 실행합니다. 반환된 GPU 정보와 페이지 메타데이터를 Pydantic으로 검증하여 JSON에 저장합니다. **이 연결 검사 옵션은 Qwen 추론을 수행하지 않습니다. AI 검토에는 아래의 `--review`를 사용하세요.** 원본 PDF를 업로드하거나 시험지 데이터를 Volume에 저장하지 않으며, 본문과 이미지를 로그에 출력하지 않습니다.
 
@@ -84,10 +84,10 @@ docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
 
 인증 오류는 `modal token new`, 앱을 찾지 못하는 오류는 동일 workspace/environment로 재배포하여 해결합니다. 타임아웃 또는 GPU 오류는 Modal dashboard의 해당 실행 로그를 확인하세요. 실패 시 CLI는 1로 종료하며 임시 이미지는 삭제됩니다. 클라우드 컨테이너는 최소 0개·최대 1개, 짧은 유휴 종료 시간으로 설정했습니다.
 
-구현은 공식 [배포된 함수 호출 및 인증](https://modal.com/docs/guide/trigger-deployed-functions), [GPU 설정](https://modal.com/docs/guide/gpu)을 따릅니다. 로컬 테스트의 모의 호출 통과는 실제 GPU 실행 성공을 의미하지 않습니다. 인증 후 위 명령의 성공을 확인하면 다음 단계인 Qwen VLM의 단일 페이지 검토로 진행할 수 있습니다.
+구현은 공식 [배포된 함수 호출 및 인증](https://modal.com/docs/guide/trigger-deployed-functions), [GPU 설정](https://modal.com/docs/guide/gpu)을 따릅니다. 로컬 테스트의 모의 호출 통과는 실제 GPU 실행 성공을 의미하지 않습니다.
 
 
-## Qwen 첫 페이지 검토 (Phase 5)
+## Qwen 첫 페이지 검토
 
 기존 Modal 인증을 그대로 사용합니다. 코드 업데이트 후 이미지를 빌드하고 재배포하세요.
 
@@ -123,6 +123,6 @@ docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
 
 - 로컬 테스트 44개 통과: JSON 스키마, 잘못된 응답, 전송 모드, CLI 오류와 임시 파일 정리.
 - Modal L4에서 Qwen3-VL-8B-Instruct의 이미지 포함 및 텍스트 전용 호출과 JSON 저장을 실제 확인했습니다. 캐시 재사용 시 가중치를 다시 내려받지 않는 것도 확인했습니다.
-- 정상 샘플 `2 + 2`, 선택지 `3 / 4 / 5`에서도 정답이 없거나 정답 표시가 필요하다는 오탐이 발생했습니다. 프롬프트 보강만으로 해결되지 않았으며 텍스트 모드에서도 재실행 시 오탐이 나타났습니다. **현재는 연결·추론 경로 검증 단계이며 판정 정확도가 검증된 도구가 아닙니다.** `confidence`는 모델의 자기 평가로 정확도를 보장하지 않습니다. 다음 단계의 독립 verifier와 문항별 검증이 필요합니다.
+- 정상 샘플 `2 + 2`, 선택지 `3 / 4 / 5`에서도 정답이 없거나 정답 표시가 필요하다는 오탐이 발생했습니다. 프롬프트 보강만으로 해결되지 않았으며 텍스트 모드에서도 재실행 시 오탐이 나타났습니다. **현재는 연결·추론 경로 검증 단계이며 판정 정확도가 검증된 도구가 아닙니다.** `confidence`는 모델의 자기 평가로 정확도를 보장하지 않습니다. 판정을 신뢰하려면 독립적인 재검증과 문항별 검증이 필요합니다.
 
 - 정답이 없는 합성 샘플 `2 + 2`, 선택지 `3 / 5 / 6`에서는 `C. 6`이라고 잘못 계산하고 오류를 누락했습니다. 결과는 `output/sample-no-valid-answer.page-review.json`에 남겼습니다. 현재 검증은 추론 경로의 동작 확인이며 정확도 합격 판정이 아닙니다.
