@@ -8,4 +8,5 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY exam_checker ./exam_checker
+COPY modal_app ./modal_app
 ENTRYPOINT ["python", "-m", "exam_checker.cli"]

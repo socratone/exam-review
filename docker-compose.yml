@@ -8,4 +8,7 @@ services:
       - ./output:/output
     environment:
       EXAM_CHECKER_RENDER_DPI: ${EXAM_CHECKER_RENDER_DPI:-160}
+      EXAM_CHECKER_GPU: ${EXAM_CHECKER_GPU:-L4}
+      EXAM_CHECKER_MODAL_APP: ${EXAM_CHECKER_MODAL_APP:-exam-checker}
+      EXAM_CHECKER_MODEL: ${EXAM_CHECKER_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
     entrypoint: ["python", "-m", "exam_checker.cli"]

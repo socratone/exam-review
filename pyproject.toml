@@ -3,7 +3,12 @@ name = "exam-checker"
 version = "0.1.0"
 description = "Local PDF preprocessing for exam review"
 requires-python = ">=3.12"
-dependencies = ["pymupdf>=1.26,<2", "typer>=0.16,<1", "pydantic>=2.11,<3"]
+dependencies = [
+    "pymupdf>=1.26,<2",
+    "typer>=0.16,<1",
+    "pydantic>=2.11,<3",
+    "modal>=1.0,<2",
+]
 
 [project.scripts]
 exam-checker = "exam_checker.cli:app"

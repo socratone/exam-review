@@ -1,0 +1,10 @@
+# Use after `modal token new` has created ~/.modal.toml.
+services:
+  exam-checker:
+    volumes:
+      - type: bind
+        source: ${HOME}/.modal.toml
+        target: /root/.modal.toml
+        read_only: true
+        bind:
+          create_host_path: false
