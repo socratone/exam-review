@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local PDF preprocessing for exam review"
 requires-python = ">=3.12"
 dependencies = [
+    # 로컬에는 PDF 처리·CLI·스키마·Modal SDK만 설치한다. 추론 의존성은 Modal 이미지에 있다.
     "pymupdf>=1.26,<2",
     "typer>=0.16,<1",
     "pydantic>=2.11,<3",
@@ -11,9 +12,11 @@ dependencies = [
 ]
 
 [project.scripts]
+# 로컬 설치 후 exam-checker 명령을 Typer 앱에 연결한다.
 exam-checker = "exam_checker.cli:app"
 
 [dependency-groups]
+# Docker 실행 이미지에서는 이 그룹을 설치하지 않는다.
 dev = ["pytest>=8,<10"]
 
 [build-system]

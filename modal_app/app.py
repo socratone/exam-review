@@ -2,14 +2,17 @@ import os
 
 import modal
 
+# 배포할 앱과 실행 환경을 정의한다. GPU 종류는 배포 시 환경변수로 결정된다.
 app = modal.App(os.getenv("EXAM_CHECKER_MODAL_APP", "exam-checker"))
 base_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("torch==2.9.0", "pillow==12.0.0", "pydantic==2.14.1")
 )
+# 로컬 소스 연결은 이미지 빌드 작업 뒤에 둬야 Modal의 빌드 순서 제약을 지킨다.
 image = base_image.add_local_python_source("exam_checker")
 
 
+# 이 함수 본문은 Modal GPU에서 실행된다. 로컬에서 앱을 import해도 GPU 연산은 시작되지 않는다.
 @app.function(
     image=image,
     gpu=os.getenv("EXAM_CHECKER_GPU", "L4"),
@@ -49,7 +52,7 @@ def gpu_probe(payload: dict) -> dict:
     ).model_dump()
 
 
-# Only model files are cached; page payloads remain in worker memory.
+# 이 Volume에는 모델 파일만 저장한다. 시험지 요청은 워커 메모리에서 처리한다.
 model_cache = modal.Volume.from_name("exam-checker-model-cache", create_if_missing=True)
 vlm_image = (
     base_image.pip_install("transformers==4.57.6", "accelerate==1.12.0", "torchvision==0.24.0")
@@ -58,6 +61,7 @@ vlm_image = (
 )
 
 
+# 모델을 컨테이너 메모리에 유지하여 같은 컨테이너의 요청마다 다시 로딩하지 않도록 한다.
 @app.cls(
     image=vlm_image,
     gpu=os.getenv("EXAM_CHECKER_GPU", "L4"),
@@ -70,8 +74,10 @@ vlm_image = (
     retries=0,
 )
 class PageReviewer:
+    # 클라이언트의 PageReviewer(model_id=...)에서 전달받는 원격 클래스 파라미터다.
     model_id: str = modal.parameter()
 
+    # 새 GPU 컨테이너에서 한 번 실행한다. 요청마다 실행되는 review와 수명이 다르다.
     @modal.enter()
     def load(self):
         from modal_app.model import load_model
@@ -81,6 +87,7 @@ class PageReviewer:
         except Exception as exc:
             raise RuntimeError(f"MODEL_LOAD_FAILED ({type(exc).__name__}): check model ID, dependencies, cache access and GPU memory") from None
 
+    # 요청마다 입력 검증·추론·결과 포장을 수행한다. 원시 모델 응답 대신 결과 또는 오류 코드를 돌려준다.
     @modal.method()
     def review(self, payload: dict) -> dict:
         import torch
@@ -92,6 +99,7 @@ class PageReviewer:
         try:
             request = PageReviewRequest.model_validate(payload)
             findings = infer(self.model, self.processor, request)
+            # 실행 정보는 모델에게 생성시키지 않고 실제 요청과 설정에서 가져온다.
             result = PageReviewResult(
                 model=self.model_id, page_number=request.page_number,
                 image_used=request.image_png is not None, review=findings,

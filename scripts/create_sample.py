@@ -4,9 +4,11 @@ from pathlib import Path
 import pymupdf
 
 
+# 실제 시험지 없이 실행을 확인할 수 있도록 텍스트 페이지와 도형 페이지를 가진 PDF를 만든다.
 def main():
     path = Path("data/sample.pdf")
     path.parent.mkdir(parents=True, exist_ok=True)
+    # 같은 이름으로 사용자가 저장한 파일을 실수로 덮어쓰지 않는다.
     if path.exists():
         raise SystemExit(f"Refusing to overwrite {path}")
     with pymupdf.open() as doc:

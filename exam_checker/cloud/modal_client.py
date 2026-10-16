@@ -7,10 +7,12 @@ from exam_checker.cloud.schema import GPUProbeRequest, GPUProbeResult
 from exam_checker.pdf.pipeline import PageData
 
 
+# 원격 오류를 CLI에 전달한다. 안내 메시지에는 시험 내용이나 인증 정보를 포함하지 않는다.
 class CloudError(RuntimeError):
     """Cloud errors safe to display without exposing payloads or credentials."""
 
 
+# 배포된 gpu_probe를 호출해 데이터 전송과 CUDA 연산을 검사한다. Qwen 추론은 하지 않는다.
 def check_gpu(page: PageData) -> GPUProbeResult:
     try:
         request = GPUProbeRequest(
@@ -21,6 +23,7 @@ def check_gpu(page: PageData) -> GPUProbeResult:
     except ValidationError as exc:
         raise CloudError("First-page payload exceeds the GPU check limits (200,000 characters / 20 MB PNG).") from exc
     try:
+        # 이미 배포된 함수를 조회한다. 이 호출이 배포를 수행하지는 않는다.
         function = modal.Function.from_name(
             os.getenv("EXAM_CHECKER_MODAL_APP", "exam-checker"), "gpu_probe"
         )
@@ -42,6 +45,7 @@ def check_gpu(page: PageData) -> GPUProbeResult:
     return result
 
 
+# 첫 페이지의 텍스트·선택적 이미지를 보내고, 검증된 AI 결과 또는 CloudError를 반환한다.
 def review_page(page: PageData, model: str, text_only: bool = False):
     from exam_checker.cloud.review_schema import PageReviewRequest, PageReviewResult
 
@@ -55,9 +59,11 @@ def review_page(page: PageData, model: str, text_only: bool = False):
     except ValidationError:
         raise CloudError("Review payload exceeds limits (30,000 characters / 20 MB PNG).") from None
     try:
+        # 로컬 모델 객체가 아니라 원격 클래스 핸들이다. GPU 로딩은 Modal에서 수행한다.
         reviewer = modal.Cls.from_name(
             os.getenv("EXAM_CHECKER_MODAL_APP", "exam-checker"), "PageReviewer",
         )(model_id=model)
+        # dict 안의 PNG bytes는 SDK가 전송한다. 원본 PDF 파일은 업로드하지 않는다.
         raw = reviewer.review.remote(request.model_dump())
     except modal.exception.AuthError:
         raise CloudError("Modal authentication failed. Run modal token new; see README.") from None
@@ -67,6 +73,7 @@ def review_page(page: PageData, model: str, text_only: bool = False):
         raise CloudError("Modal review timed out; inspect the Modal dashboard.") from None
     except Exception as exc:
         raise CloudError(f"Modal model load/call failed ({type(exc).__name__}); inspect the dashboard for model load or memory errors.") from None
+    # 원격 오류 코드만 안내로 바꿔 시험지나 원시 응답이 예외 메시지에 섞이지 않게 한다.
     errors = {
         "GPU_OOM": "GPU memory exhausted. Try Qwen/Qwen3-VL-4B-Instruct with --model or deploy to a larger GPU.",
         "INVALID_JSON": "Model response did not match the review JSON schema; no report was saved.",
@@ -80,6 +87,7 @@ def review_page(page: PageData, model: str, text_only: bool = False):
         result = PageReviewResult.model_validate(raw["result"])
     except (ValidationError, KeyError, TypeError):
         raise CloudError("Invalid page review response; redeploy the matching app version.") from None
+    # 스키마가 맞더라도 다른 페이지·모델의 응답이면 해당 요청의 결과로 받아들이지 않는다.
     if result.page_number != page.page_number or result.model != model or result.image_used != (not text_only):
         raise CloudError("Modal review response does not match the submitted page/model.")
     return result

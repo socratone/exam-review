@@ -10,6 +10,7 @@ from exam_checker.cloud.modal_client import CloudError, check_gpu
 from exam_checker.pdf.pipeline import PageData
 
 
+# 이미지 바이트 전송만 확인하는 테스트용 PageData다. 실제 PNG 디코딩은 수행하지 않는다.
 @pytest.fixture
 def page(tmp_path):
     path = tmp_path / "page.png"
@@ -17,6 +18,7 @@ def page(tmp_path):
     return PageData(page_number=1, text="Sample", image_path=path, needs_visual_review=True)
 
 
+# CUDA 연결 검사를 통과한 상황을 나타내는 원격 응답 예시다.
 @pytest.fixture
 def response():
     return dict(kind="gpu_connection_check", page_number=1, text_characters=6,
@@ -24,6 +26,7 @@ def response():
                 cuda_available=True, computation_result=4.0)
 
 
+# 원격 함수를 Mock으로 바꿔 앱 조회와 실제 전송 딕셔너리, 응답 변환을 확인한다.
 def test_payload_and_response(page, response, monkeypatch):
     function = Mock()
     function.remote.return_value = response
@@ -35,6 +38,7 @@ def test_payload_and_response(page, response, monkeypatch):
     function.remote.assert_called_once_with(dict(page_number=1, text="Sample", image_png=b"transport-test"))
 
 
+# 각 원격 오류가 안내 메시지로 바뀌고 원래 예외의 민감한 문자열은 노출되지 않는지 확인한다.
 @pytest.mark.parametrize("exception,expected", [
     (modal.exception.AuthError("private-token"), "authentication failed"),
     (modal.exception.NotFoundError("private-payload"), "not found"),
@@ -50,6 +54,7 @@ def test_cloud_errors_are_actionable_and_redacted(page, exception, expected, mon
     assert "private" not in str(error.value)
 
 
+# CUDA 검사 실패나 요청과 다른 페이지 번호가 성공으로 처리되지 않는지 확인한다.
 @pytest.mark.parametrize("changes", [{"cuda_available": False}, {"computation_result": 3.0}, {"page_number": 2}])
 def test_rejects_failed_or_mismatched_probe(page, response, changes, monkeypatch):
     function = Mock()
@@ -59,6 +64,7 @@ def test_rejects_failed_or_mismatched_probe(page, response, changes, monkeypatch
         check_gpu(page)
 
 
+# 원격 성공·실패 모두 임시 파일을 정리하며 성공한 경우에만 결과를 저장하는지 확인한다.
 @pytest.mark.parametrize("fail", [False, True])
 def test_cli_cloud_path_and_cleanup(tmp_path, response, monkeypatch, fail):
     from exam_checker.cloud.schema import GPUProbeResult
@@ -89,6 +95,7 @@ def test_cli_cloud_path_and_cleanup(tmp_path, response, monkeypatch, fail):
         assert GPUProbeResult.model_validate_json(output.read_text()).kind == "gpu_connection_check"
 
 
+# 출력 경로가 입력 PDF와 같으면 실행을 거부하고 원본을 보존하는지 확인한다.
 def test_cli_rejects_overwriting_pdf(tmp_path):
     pdf = tmp_path / "sample.pdf"
     pdf.write_bytes(b"original")

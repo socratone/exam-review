@@ -2,6 +2,8 @@
 
 CLI 실행부터 로컬 전처리, Modal 추론, 결과 저장까지의 흐름과 Mermaid 차트는 [CLI 실행 흐름](docs/cli-flow.md)을 참고하세요.
 
+각 파일과 주요 함수의 역할은 [실행 순서로 읽는 코드](docs/code-walkthrough.md)에 정리되어 있습니다.
+
 시험지 PDF를 로컬 CPU에서 전처리하는 CLI입니다. 로컬 PDF 전처리, Modal GPU 연결 검사, Qwen 첫 페이지 AI 검토를 지원합니다.
 
 - PDF 경로·형식·암호 보호 여부 검증
