@@ -6,6 +6,7 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
+from exam_checker.tracing import traced, span, record
 from exam_checker.config import Settings
 from exam_checker.cloud.modal_client import CloudError, check_gpu, review_page
 from exam_checker.cloud.review_schema import DEFAULT_MODEL
@@ -17,8 +18,9 @@ app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
 # CLI의 진입점: 옵션 검사 → PDF 전처리 → 선택적 클라우드 호출 → 결과 저장을 조율한다.
 @app.command()
+@traced("exam_checker.run", root=True)
 def main(
-    pdf_path: Annotated[Path, typer.Argument(help="Local PDF path (inside Docker: /data/exam.pdf).")],
+    pdf_path: Annotated[Path, typer.Argument(help="Local PDF path (for example: data/exam.pdf).")],
     dpi: Annotated[int | None, typer.Option(min=72, max=300, help="Render DPI; overrides EXAM_CHECKER_RENDER_DPI.")] = None,
     verbose: Annotated[bool, typer.Option(help="Show per-page processing logs.")] = False,
     modal_check: Annotated[bool, typer.Option(help="Send the first page to Modal for a CUDA connection check (no AI review).")] = False,
@@ -58,7 +60,9 @@ def main(
                 result = check_gpu(pages[0])
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 # 검증된 결과만 저장한다. 같은 경로는 덮어쓰며 원자적 교체 방식은 아니다.
-                destination.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+                with span("report.write") as run:
+                    destination.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+                    record(run, metadata={"filename": destination.name})
                 typer.echo(f"GPU check passed: {result.gpu_name}; CUDA result: {result.computation_result}")
                 typer.echo(f"Connection check JSON (not an exam review): {destination}")
             if review:
@@ -67,7 +71,9 @@ def main(
                 result = review_page(pages[0], model_id, text_only=text_only)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 # 검증된 결과만 저장한다. 같은 경로는 덮어쓰며 원자적 교체 방식은 아니다.
-                destination.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+                with span("report.write") as run:
+                    destination.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+                    record(run, metadata={"filename": destination.name})
                 typer.echo(f"First-page review complete: {len(result.review.issues)} suspected issues (not independently verified).")
                 typer.echo(f"Review JSON: {destination}")
         typer.echo("Temporary images cleaned up. Local preprocessing complete.")

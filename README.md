@@ -1,130 +1,93 @@
 # Exam Checker
 
-CLI 실행부터 로컬 전처리, Modal 추론, 결과 저장까지의 흐름과 Mermaid 차트는 [CLI 실행 흐름](docs/cli-flow.md)을 참고하세요.
+시험지 PDF를 로컬 CPU에서 전처리하고, 첫 페이지를 Modal GPU의 Qwen으로 검토하는 Python CLI입니다. LangSmith로 처리 단계와 모델 입출력을 추적할 수 있습니다.
 
-각 파일과 주요 함수의 역할은 [실행 순서로 읽는 코드](docs/code-walkthrough.md)에 정리되어 있습니다.
+[CLI 실행 흐름과 Mermaid 차트](docs/cli-flow.md) · [실행 순서로 읽는 코드](docs/code-walkthrough.md) · [LangSmith 설정과 디버깅](docs/langsmith.md)
 
-시험지 PDF를 로컬 CPU에서 전처리하는 CLI입니다. 로컬 PDF 전처리, Modal GPU 연결 검사, Qwen 첫 페이지 AI 검토를 지원합니다.
+## 설치와 로컬 실행
 
-- PDF 경로·형식·암호 보호 여부 검증
-- 페이지별 텍스트 추출과 PNG 렌더링 (기본 160 DPI)
-- 텍스트가 부족한 페이지 표시
-- 성공·오류 종료 시 임시 이미지 정리
-
-기본 실행은 전처리 요약만 출력합니다. `--review`로 첫 페이지를 Qwen으로 검토하고 JSON을 저장할 수 있습니다. 문항 분할, 정답 키 검증, 의심 항목 재검증, 전체 시험지 검토와 Markdown 보고서는 지원하지 않습니다. OCR은 실행하지 않습니다. 영숫자·한글 등 문자/숫자가 20자 미만인 페이지를 시각 검토 대상으로 표시하며, 이는 스캔 여부의 확정 판정은 아닙니다.
-
-## Docker Compose 실행
-
-Docker Desktop 또는 Docker Engine과 Compose가 필요합니다.
-
-```bash
-docker compose build
-# PDF를 data/ 폴더에 넣은 뒤 실행
-docker compose run --rm exam-checker /data/sample.pdf
-```
-
-호스트의 `data/`가 컨테이너의 `/data`에 읽기 전용으로 연결됩니다. 호스트 절대 경로 대신 `/data/...` 경로를 전달하세요. `.env` 없이도 기본값으로 실행됩니다.
-
-```bash
-cp .env.example .env
-# .env에서 EXAM_CHECKER_RENDER_DPI 수정 (72–300)
-docker compose run --rm exam-checker /data/sample.pdf --dpi 180 --verbose
-docker compose run --rm exam-checker --help
-```
-
-`--dpi`가 환경변수보다 우선합니다. PNG는 컨테이너 임시 디렉터리에만 생성되며 종료 시 제거됩니다. `output/`에 연결 검사와 AI 검토 JSON을 저장할 수 있습니다. 로그에는 시험지 본문을 출력하지 않습니다. 처리 실패 시 종료 코드는 1이며 잘못된 CLI 옵션은 2입니다.
-
-## 로컬 개발과 테스트
-
-Python 3.12 이상과 [uv](https://docs.astral.sh/uv/)를 사용합니다. Docker 이미지는 Python 3.12로 실행합니다.
+Python 3.12 이상과 [uv](https://docs.astral.sh/uv/)를 사용합니다. 프로젝트 디렉터리에서 실행하세요.
 
 ```bash
 uv sync --frozen
+cp .env.example .env  # 처음 설정할 때만 실행; 기존 .env는 덮어쓰지 마세요.
 uv run python scripts/create_sample.py
-uv run exam-checker data/sample.pdf
-uv run pytest
+uv run exam-checker data/sample.pdf --verbose
 ```
 
-샘플 생성기는 실제 시험지 대신 텍스트 페이지와 도형만 있는 페이지를 생성합니다. 기존 `data/sample.pdf`는 덮어쓰지 않습니다. 테스트는 합성 PDF로 추출, 렌더 크기, 암호 보호, 잘못된 입력, DPI 설정, 오류 시 정리를 검증하며 외부 서비스가 필요하지 않습니다.
+샘플 생성기는 기존 `data/sample.pdf`를 덮어쓰지 않습니다. 실제 PDF의 상대 경로나 절대 경로도 전달할 수 있습니다. CLI와 Modal 배포 코드는 실행 디렉터리의 `.env`를 읽으며 셸 환경변수가 우선합니다.
 
-PyMuPDF의 공식 [텍스트 추출 및 이미지 렌더링 API](https://pymupdf.readthedocs.io/en/latest/page.html)를 사용합니다. 로컬 AI 모델은 실행하지 않습니다.
+기본 실행은 모든 페이지의 텍스트 추출·임시 PNG 렌더링·요약 출력까지만 수행합니다. 기본 DPI는 160이며 `--dpi`로 72–300 범위에서 변경합니다. 임시 이미지는 처리 종료 시 정리합니다. OCR은 실행하지 않으며 문자·숫자가 20자 미만인 페이지는 시각 검토 대상으로 표시합니다.
 
-## Modal GPU 연결 검사
+## Modal 인증과 배포
 
-`--modal-check`는 첫 페이지의 텍스트와 PNG만 Modal로 보내고 실제 CUDA 연산 `2² = 4`를 실행합니다. 반환된 GPU 정보와 페이지 메타데이터를 Pydantic으로 검증하여 JSON에 저장합니다. **이 연결 검사 옵션은 Qwen 추론을 수행하지 않습니다. AI 검토에는 아래의 `--review`를 사용하세요.** 원본 PDF를 업로드하거나 시험지 데이터를 Volume에 저장하지 않으며, 본문과 이미지를 로그에 출력하지 않습니다.
-
-### 사용자가 최초 1회 할 일
-
-1. [Modal](https://modal.com/)에 가입하고 사용할 workspace에서 GPU 사용이 가능한지 확인합니다. 실행 시 계정의 크레딧/요금이 적용됩니다.
-2. 프로젝트 디렉터리의 터미널에서 다음을 실행하고 브라우저에서 인증합니다. 토큰을 채팅에 전달할 필요는 없습니다.
+최초 인증은 브라우저에서 진행하며 `~/.modal.toml`을 사용합니다. L4 GPU 사용을 위해 Modal 계정의 결제 설정이 필요할 수 있습니다.
 
 ```bash
-.venv/bin/modal token new
+uv run modal token new
+uv run modal deploy -m modal_app.app
 ```
 
-새 환경이라면 먼저 `uv sync --frozen`을 실행하세요. 인증은 호스트의 `~/.modal.toml`에 저장됩니다. Docker용 추가 Compose 파일은 이 파일만 읽기 전용으로 마운트합니다.
-
-3. 이미지를 빌드하고 Modal 함수를 배포합니다.
+`.env`의 `EXAM_CHECKER_GPU`는 배포 시 적용됩니다. 기본은 L4입니다. `EXAM_CHECKER_MODAL_APP`은 배포와 호출에 같은 값을 사용하며 기본은 `exam-checker`입니다. GPU 연산과 모델 캐시 Volume에는 Modal 요금이 적용됩니다.
 
 ```bash
-docker compose build
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  --entrypoint modal exam-checker deploy -m modal_app.app
+# 모델 추론 없이 첫 페이지 전송과 CUDA 연산을 확인
+uv run exam-checker data/sample.pdf --modal-check \
+  --output output/sample.gpu-check.json
+
+# 첫 페이지 텍스트 + PNG로 AI 검토
+uv run exam-checker data/sample.pdf --review \
+  --output output/sample.page-review.json
+
+# 첫 페이지 텍스트만 전송
+uv run exam-checker data/sample.pdf --review --text-only \
+  --output output/sample.text-review.json
 ```
 
-4. 합성 샘플로 GPU 연결을 검사합니다.
+기본 모델은 `Qwen/Qwen3-VL-8B-Instruct`입니다. `--model`이나 `EXAM_CHECKER_MODEL`로 Qwen3-VL 계열 모델을 변경할 수 있습니다. 첫 호출은 모델 다운로드·GPU 로딩으로 시간이 걸립니다. 모델 파일만 Modal Volume에 캐시하고 시험지 요청을 별도 파일로 저장하지 않습니다.
+
+## LangSmith 추적
+
+`.env`에 다음 값을 설정하면 로컬 추적을 활성화합니다.
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=발급받은_API_키
+LANGSMITH_PROJECT=exam-checker
+EXAM_CHECKER_TRACE_CONTENT=false
+EXAM_CHECKER_LANGSMITH_SECRET=exam-checker-langsmith
+```
+
+클라우드 추적에도 같은 설정을 적용하고 앱을 재배포합니다. 아래 스크립트는 LangSmith 관련 값만 Modal Secret에 저장하고 기존 같은 이름의 Secret 값을 갱신합니다. 키를 화면에 출력하지 않습니다.
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  exam-checker /data/sample.pdf --modal-check \
-  --output /output/sample.gpu-check.json
+uv run python scripts/configure_tracing.py
+uv run modal deploy -m modal_app.app
+uv run exam-checker data/sample.pdf --review --verbose
 ```
 
-샘플이 없으면 `uv run python scripts/create_sample.py`로 만듭니다. 성공하면 `GPU check passed`가 표시되고 호스트의 `output/sample.gpu-check.json`에 `cuda_available: true`, `computation_result: 4.0`, GPU 이름이 기록됩니다. 첫 배포는 클라우드 PyTorch 이미지 빌드로 시간이 걸릴 수 있습니다.
+LangSmith의 `exam-checker` 프로젝트에서 `exam_checker.run`을 열면 로컬·클라우드 단계를 연결해 볼 수 있습니다. 모델 초기 로딩은 요청 처리 전 수행되므로 별도의 `model.load` trace입니다. 키가 없거나 `LANGSMITH_TRACING=false`이면 추적 없이 실행합니다.
 
-`.env`의 `EXAM_CHECKER_GPU`는 배포 시 적용되며 기본값은 `L4`입니다. 변경 후 재배포하세요. `EXAM_CHECKER_MODAL_APP`은 배포와 호출에 동일한 값을 사용해야 합니다. 기본은 `exam-checker`입니다. 여러 프로필을 쓰는 경우 호스트에서 `modal profile activate PROFILE`로 배포·호출에 사용할 프로필을 선택하세요.
+기본으로 단계별 시간·오류 타입·페이지와 토큰 수 등의 메타데이터만 전송합니다. **프롬프트·추출 텍스트·원시 응답까지 보려면 `EXAM_CHECKER_TRACE_CONTENT=true`를 설정하세요. 이 내용은 LangSmith에 저장됩니다.** 클라우드 설정 변경 시 Secret 갱신과 재배포도 필요합니다. PNG 바이트는 추적에 포함하지 않습니다. 자세한 설정과 trace 트리는 [LangSmith 문서](docs/langsmith.md)를 참고하세요.
 
-인증 오류는 `modal token new`, 앱을 찾지 못하는 오류는 동일 workspace/environment로 재배포하여 해결합니다. 타임아웃 또는 GPU 오류는 Modal dashboard의 해당 실행 로그를 확인하세요. 실패 시 CLI는 1로 종료하며 임시 이미지는 삭제됩니다. 클라우드 컨테이너는 최소 0개·최대 1개, 짧은 유휴 종료 시간으로 설정했습니다.
+## 결과와 한계
 
-구현은 공식 [배포된 함수 호출 및 인증](https://modal.com/docs/guide/trigger-deployed-functions), [GPU 설정](https://modal.com/docs/guide/gpu)을 따릅니다. 로컬 테스트의 모의 호출 통과는 실제 GPU 실행 성공을 의미하지 않습니다.
+`--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 생략하면 `output/<이름>.page-review.json` 또는 `output/<이름>.gpu-check.json`에 저장합니다. 같은 파일은 성공 시 덮어쓰며, 추론 실패 시 이전 파일이 남을 수 있습니다. 파일 쓰기는 원자적 교체 방식이 아닙니다.
 
+- 모든 페이지를 전처리하지만 AI는 **첫 페이지만** 검토합니다.
+- 결과는 `unverified_page_review`, 각 의심 항목의 `verified`는 `null`입니다.
+- 문항 분할·정답 키 검증·독립 재검증·전체 시험지 검토·Markdown 보고서는 지원하지 않습니다.
+- 정상 샘플 `2 + 2`, 선택지 `3 / 4 / 5`에서 오탐이, 정답을 뺀 `3 / 5 / 6`에서 계산 오류와 오류 누락이 관찰됐습니다. `issues: []`나 높은 `confidence`는 정확성을 보장하지 않습니다.
+- AI 요청 한도는 텍스트 30,000자, PNG 20 MB, 입력 8,192토큰, 생성 2,048토큰입니다. 이미지는 긴 변 최대 1,280픽셀로 축소하므로 작은 글씨를 놓칠 수 있습니다.
 
-## Qwen 첫 페이지 검토
-
-기존 Modal 인증을 그대로 사용합니다. 코드 업데이트 후 이미지를 빌드하고 재배포하세요.
+## 테스트와 로그
 
 ```bash
-docker compose build
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  --entrypoint modal exam-checker deploy -m modal_app.app
-
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  exam-checker /data/sample.pdf --review \
-  --output /output/sample.page-review.json
+uv run pytest -q
+uv run exam-checker --help
+uv run modal app logs exam-checker -f --timestamps
 ```
 
-기본 모델은 `Qwen/Qwen3-VL-8B-Instruct`, GPU는 L4입니다. **첫 페이지만** 검토하며 기본으로 네이티브 텍스트와 페이지 PNG를 함께 보냅니다. 결과의 `kind`는 `unverified_page_review`이고 각 의심 항목의 `verified`는 `null`입니다. 한 번의 모델 판단으로 정답 오류를 확정하지 않습니다. 빈 페이지·불완전한 문항은 `limitations`를 확인하세요.
+로컬 테스트는 합성 PDF와 모의 원격 응답을 사용하며 GPU나 LangSmith API 키가 필요하지 않습니다. 추적 테스트는 SDK의 실제 RunTree와 모의 클라이언트로 분산 연결·본문 기록 제어·오류 가림을 검사합니다. 테스트 통과가 모델 판정 정확도를 뜻하지 않습니다.
 
-텍스트만으로 검토하려면 다음과 같이 실행합니다. 추출된 텍스트가 없는 페이지는 이 모드로 검토할 수 없습니다.
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  exam-checker /data/sample.pdf --review --text-only \
-  --output /output/sample.text-review.json
-```
-
-모델은 `--model` 또는 `.env`의 `EXAM_CHECKER_MODEL`로 변경할 수 있습니다. 현재 로더는 Qwen3-VL 계열을 지원합니다. GPU 메모리가 부족하면 `--model Qwen/Qwen3-VL-4B-Instruct`를 사용하거나 GPU 설정 변경 후 재배포하세요. `--review`와 `--modal-check`는 함께 사용할 수 없습니다.
-
-모델 다운로드는 최초 캐시 미스 때 실행됩니다. Modal Volume `exam-checker-model-cache`에는 가중치·tokenizer·설정 등 모델 파일을 보관합니다. 시험지 텍스트·이미지는 캐시에 기록하지 않습니다. 각 컨테이너는 모델을 한 번 로딩하며 30초 유휴 후 종료 대상으로 전환됩니다. 첫 호출은 다운로드와 로딩으로 수 분 이상 걸릴 수 있습니다. GPU 실행과 Volume 저장에는 Modal 요금이 적용됩니다.
-
-초기 검증용 제한: 텍스트 30,000자, PNG 20 MB, 모델 입력 8,192토큰, 생성 2,048토큰입니다. GPU 메모리를 제한하기 위해 이미지는 긴 변 최대 1,280픽셀로 축소하므로 작은 글씨·복잡한 도표는 누락될 수 있습니다. 한도를 넘기거나 모델 JSON이 스키마에 맞지 않으면 실패로 종료하고 새 보고서를 쓰지 않습니다. 기존 출력 파일이 있으면 실패 시 그대로 남으므로 종료 코드도 확인하세요. 원문 모델 응답은 로그에 출력하지 않습니다.
-
-구현은 [Qwen 공식 모델 카드](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)와 [Modal 모델 캐시 가이드](https://modal.com/docs/guide/model-weights)를 참고합니다. 모델 추론 라이브러리는 Modal 이미지에만 설치하며 로컬에서는 추론하지 않습니다.
-
-### 현재 검증 상태와 품질 한계
-
-- 로컬 테스트 44개 통과: JSON 스키마, 잘못된 응답, 전송 모드, CLI 오류와 임시 파일 정리.
-- Modal L4에서 Qwen3-VL-8B-Instruct의 이미지 포함 및 텍스트 전용 호출과 JSON 저장을 실제 확인했습니다. 캐시 재사용 시 가중치를 다시 내려받지 않는 것도 확인했습니다.
-- 정상 샘플 `2 + 2`, 선택지 `3 / 4 / 5`에서도 정답이 없거나 정답 표시가 필요하다는 오탐이 발생했습니다. 프롬프트 보강만으로 해결되지 않았으며 텍스트 모드에서도 재실행 시 오탐이 나타났습니다. **현재는 연결·추론 경로 검증 단계이며 판정 정확도가 검증된 도구가 아닙니다.** `confidence`는 모델의 자기 평가로 정확도를 보장하지 않습니다. 판정을 신뢰하려면 독립적인 재검증과 문항별 검증이 필요합니다.
-
-- 정답이 없는 합성 샘플 `2 + 2`, 선택지 `3 / 5 / 6`에서는 `C. 6`이라고 잘못 계산하고 오류를 누락했습니다. 결과는 `output/sample-no-valid-answer.page-review.json`에 남겼습니다. 현재 검증은 추론 경로의 동작 확인이며 정확도 합격 판정이 아닙니다.
+처리 실패 시 종료 코드 1, 잘못된 옵션은 2입니다. 모델 로딩·추론 문제는 Modal 로그에서, 단계별 실행 시간과 선택한 입출력은 LangSmith에서 확인합니다.

@@ -1,4 +1,4 @@
-"""Generate a synthetic, non-confidential PDF for the Docker smoke test."""
+"""로컬 CLI 실행 확인용으로 비기밀 합성 PDF를 생성한다."""
 from pathlib import Path
 
 import pymupdf

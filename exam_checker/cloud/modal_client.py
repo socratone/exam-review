@@ -1,6 +1,8 @@
 import os
 
 import modal
+
+from exam_checker.tracing import traced, headers
 from pydantic import ValidationError
 
 from exam_checker.cloud.schema import GPUProbeRequest, GPUProbeResult
@@ -13,6 +15,7 @@ class CloudError(RuntimeError):
 
 
 # 배포된 gpu_probe를 호출해 데이터 전송과 CUDA 연산을 검사한다. Qwen 추론은 하지 않는다.
+@traced("modal.gpu_check")
 def check_gpu(page: PageData) -> GPUProbeResult:
     try:
         request = GPUProbeRequest(
@@ -27,9 +30,10 @@ def check_gpu(page: PageData) -> GPUProbeResult:
         function = modal.Function.from_name(
             os.getenv("EXAM_CHECKER_MODAL_APP", "exam-checker"), "gpu_probe"
         )
-        raw = function.remote(request.model_dump())
+        trace_headers = headers()
+        raw = function.remote(request.model_dump(), **({"trace_headers": trace_headers} if trace_headers else {}))
     except modal.exception.AuthError as exc:
-        raise CloudError("Modal authentication failed. Run modal token new and mount the credentials; see README.") from exc
+        raise CloudError("Modal authentication failed. Run modal token new; see README.") from exc
     except modal.exception.NotFoundError as exc:
         raise CloudError("Modal app/function not found. Deploy modal_app.app in the same workspace/environment first.") from exc
     except (TimeoutError, modal.exception.FunctionTimeoutError) as exc:
@@ -46,6 +50,7 @@ def check_gpu(page: PageData) -> GPUProbeResult:
 
 
 # 첫 페이지의 텍스트·선택적 이미지를 보내고, 검증된 AI 결과 또는 CloudError를 반환한다.
+@traced("modal.review")
 def review_page(page: PageData, model: str, text_only: bool = False):
     from exam_checker.cloud.review_schema import PageReviewRequest, PageReviewResult
 
@@ -64,7 +69,8 @@ def review_page(page: PageData, model: str, text_only: bool = False):
             os.getenv("EXAM_CHECKER_MODAL_APP", "exam-checker"), "PageReviewer",
         )(model_id=model)
         # dict 안의 PNG bytes는 SDK가 전송한다. 원본 PDF 파일은 업로드하지 않는다.
-        raw = reviewer.review.remote(request.model_dump())
+        trace_headers = headers()
+        raw = reviewer.review.remote(request.model_dump(), **({"trace_headers": trace_headers} if trace_headers else {}))
     except modal.exception.AuthError:
         raise CloudError("Modal authentication failed. Run modal token new; see README.") from None
     except modal.exception.NotFoundError:

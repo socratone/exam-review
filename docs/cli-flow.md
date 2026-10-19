@@ -6,7 +6,7 @@
 
 ## 1. 실행 방법과 모드
 
-프로젝트 디렉터리에서 실행합니다. Docker 이미지 빌드, Modal 인증·배포 방법은 [README](../README.md)를 참고하세요. 로컬 전처리만 사용할 때에는 Modal 인증이나 배포가 필요하지 않습니다.
+프로젝트 디렉터리에서 실행합니다. uv 설치, Modal 인증·배포 방법은 [README](../README.md)를 참고하세요. 로컬 전처리만 사용할 때에는 Modal 인증이나 배포가 필요하지 않습니다.
 
 | 목적 | 옵션 | 클라우드 작업 | 결과 |
 | --- | --- | --- | --- |
@@ -17,12 +17,11 @@
 
 ```bash
 # 로컬 전처리만 실행
-docker compose run --rm exam-checker /data/sample.pdf
+uv run exam-checker data/sample.pdf
 
 # Modal에서 첫 페이지 검토
-docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
-  exam-checker /data/sample.pdf --review \
-  --output /output/sample.page-review.json
+uv run exam-checker data/sample.pdf --review \
+  --output output/sample.page-review.json
 ```
 
 위 AI 검토 명령에서 `--review`를 `--modal-check`로 바꾸면 GPU 연결 검사입니다. 텍스트 전용 검토는 `--review`와 함께 `--text-only`를 추가합니다. 이 모드도 현재는 로컬에서 모든 페이지의 PNG를 생성하지만, 이미지를 클라우드에 보내지는 않습니다.
@@ -31,7 +30,7 @@ docker compose -f docker-compose.yml -f docker-compose.modal.yml run --rm \
 
 ```mermaid
 flowchart TD
-    Start["사용자: docker compose run"] --> Container["로컬 CLI 컨테이너 시작"]
+    Start["사용자: uv run exam-checker"] --> Container["로컬 Python CLI 시작"]
     Container --> Args["옵션 조합 및 출력 경로 검사"]
     Args --> Config["DPI 설정 검증"]
     Config --> PDF["PDF 경로·형식·암호·페이지 수 검사"]
@@ -68,22 +67,15 @@ flowchart TD
     Error["생성된 임시 파일 정리·오류 안내"] --> Failure["실패 종료: 코드 1"]
 ```
 
-점선은 주요 실패 경로입니다. 임시 파일 정리는 Python 컨텍스트가 정상적으로 해제되는 성공·예외 종료에 적용됩니다. 프로세스 강제 종료 등에서는 Python 정리 코드의 실행을 보장하지 않습니다. Docker의 `--rm`은 실행 후 로컬 컨테이너를 제거합니다.
+점선은 주요 실패 경로입니다. 임시 파일 정리는 Python 컨텍스트가 정상적으로 해제되는 성공·예외 종료에 적용됩니다. 프로세스 강제 종료 등에서는 Python 정리 코드의 실행을 보장하지 않습니다.
 
 ## 3. 로컬에서 일어나는 일
 
-### 컨테이너와 파일 경로
+### 로컬 실행과 파일 경로
 
-Compose가 `python -m exam_checker.cli`를 실행하며, Typer가 인자를 해석합니다.
+`uv run exam-checker`가 프로젝트 가상환경에서 Typer 앱을 실행합니다. `data/exam.pdf`처럼 상대 경로 또는 실제 절대 경로를 전달합니다. 결과도 `output/exam.page-review.json`처럼 로컬 경로에 저장합니다. Modal 인증은 로컬 `~/.modal.toml` 또는 환경변수를 사용합니다.
 
-| 호스트 | 컨테이너 | 용도 |
-| --- | --- | --- |
-| 프로젝트 폴더 | `/app` | 소스 코드, 읽기 전용 |
-| `data/` | `/data` | 입력 PDF, 읽기 전용 |
-| `output/` | `/output` | 결과 JSON 저장 |
-| `~/.modal.toml` | `/root/.modal.toml` | 추가 Compose 파일 사용 시 인증 파일, 읽기 전용 |
-
-따라서 호스트의 `data/exam.pdf`는 CLI에 `/data/exam.pdf`로 전달합니다. `--output /output/exam.page-review.json`의 결과는 호스트의 `output/exam.page-review.json`에서 확인합니다.
+CLI 진입 시 `.env`를 읽고 LangSmith 추적을 준비합니다. 키가 설정되어 있으면 `exam_checker.run` 아래에 전처리·원격 호출·저장 단계를 기록합니다. 자세한 설정은 [LangSmith 문서](langsmith.md)를 참고하세요.
 
 ### 옵션과 설정 검사
 
@@ -99,7 +91,7 @@ Compose가 `python -m exam_checker.cli`를 실행하며, Typer가 인자를 해�
 | Modal 앱 이름 | `EXAM_CHECKER_MODAL_APP`, 기본 `exam-checker`. 배포·호출 값이 같아야 함 |
 | GPU 종류 | `EXAM_CHECKER_GPU`, 기본 `L4`. 배포 시 결정되므로 변경 후 재배포 필요 |
 
-Compose는 프로젝트의 `.env` 값을 위 환경변수에 반영합니다. Python CLI를 직접 실행할 때에는 `.env`를 자동으로 읽지 않으므로 환경변수를 별도로 설정해야 합니다.
+CLI와 Modal 배포 코드는 실행 디렉터리의 `.env`를 자동으로 읽습니다. 기존 셸 환경변수가 파일보다 우선합니다.
 
 ### PDF 전처리
 
@@ -126,7 +118,7 @@ sequenceDiagram
     User->>CLI: PDF 경로 + --review
     CLI->>CLI: 모든 페이지 로컬 전처리
     CLI->>CLI: 첫 페이지 요청 검증
-    CLI->>Worker: review.remote(텍스트, 선택적 PNG)
+    CLI->>Worker: review.remote(텍스트, 선택적 PNG, 추적 헤더)
     opt 새 GPU 컨테이너 시작
         Worker->>Cache: 모델 파일 확인
         alt 캐시 미스
@@ -180,7 +172,7 @@ Modal에서는 PNG를 열어 크기를 확인하고 CUDA에서 `2² = 4`를 계�
 
 ## 6. 결과 저장과 읽는 방법
 
-`--output`을 생략하면 작업 디렉터리 아래의 다음 경로를 사용합니다. 현재 Compose에서는 `/app/output`이 호스트의 `output/`과 연결됩니다.
+`--output`을 생략하면 작업 디렉터리 아래의 다음 경로를 사용합니다.
 
 | 모드 | 기본 파일 |
 | --- | --- |
@@ -225,7 +217,7 @@ AI 검토 JSON의 주요 필드는 다음과 같습니다.
 | 모델 파일 | Modal `exam-checker-model-cache` Volume에 유지 |
 | 결과 JSON | 호스트 출력 경로에 유지; 시험 내용이나 근거가 포함될 수 있음 |
 
-앱 코드는 시험지 본문이나 원시 모델 응답을 로그로 출력하지 않습니다. 위 설명은 앱의 저장 동작이며 Modal 플랫폼 자체의 전송·운영 데이터 보존 정책을 정의하지 않습니다. 모델 컨테이너는 최소 0개, 최대 1개로 설정되어 있으며 30초 유휴 후 종료 대상이 됩니다. 종료되더라도 모델 Volume과 호스트 결과 파일은 남습니다.
+터미널에는 시험지 본문이나 원시 모델 응답을 출력하지 않습니다. LangSmith 본문 기록을 켜면 이 내용은 추적 서버에 저장됩니다. 위 설명은 앱의 저장 동작이며 Modal 플랫폼 자체의 전송·운영 데이터 보존 정책을 정의하지 않습니다. 모델 컨테이너는 최소 0개, 최대 1개로 설정되어 있으며 30초 유휴 후 종료 대상이 됩니다. 종료되더라도 모델 Volume과 호스트 결과 파일은 남습니다.
 
 ## 8. 코드를 찾아볼 때
 
@@ -243,3 +235,5 @@ AI 검토 JSON의 주요 필드는 다음과 같습니다.
 | [modal_app/model.py](../modal_app/model.py) | 모델 로딩·프롬프트·추론 |
 
 문항 분할, 번호·보기 누락 검사, 정답 키 입력, verifier, 전체 시험지 검토와 Markdown 보고서는 아직 이 실행 흐름에 포함되지 않습니다.
+
+LangSmith 추적과 부모 실행 연결은 [tracing.py](../exam_checker/tracing.py)가 담당합니다.

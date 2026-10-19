@@ -1,3 +1,4 @@
+from exam_checker.tracing import traced
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -33,5 +34,6 @@ def open_pdf(path: Path) -> Iterator[pymupdf.Document]:
 
 
 # PDF에 저장된 텍스트만 추출한다. 스캔 이미지에 OCR을 수행하지는 않는다.
+@traced("pdf.extract_text")
 def extract_text(page: pymupdf.Page) -> str:
     return page.get_text("text", sort=True)

@@ -9,6 +9,8 @@ dependencies = [
     "typer>=0.16,<1",
     "pydantic>=2.11,<3",
     "modal>=1.0,<2",
+    "langsmith>=0.4,<1",
+    "python-dotenv>=1,<2",
 ]
 
 [project.scripts]
@@ -16,7 +18,7 @@ dependencies = [
 exam-checker = "exam_checker.cli:app"
 
 [dependency-groups]
-# Docker 실행 이미지에서는 이 그룹을 설치하지 않는다.
+# 개발 및 로컬 검증에 사용하는 테스트 의존성이다.
 dev = ["pytest>=8,<10"]
 
 [build-system]

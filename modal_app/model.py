@@ -1,4 +1,6 @@
 """Imported only by the Modal GPU worker, never by the local CLI."""
+from exam_checker.tracing import span, record
+
 import json
 from io import BytesIO
 
@@ -11,7 +13,8 @@ def load_model(model_id: str, cache_volume):
     from huggingface_hub import snapshot_download
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-    path = snapshot_download(model_id)
+    with span("model.download", inputs={"model": model_id}):
+        path = snapshot_download(model_id)
     cache_volume.commit()  # 이후 GPU 로딩이 실패해도 다운로드한 모델 파일은 재사용한다.
     processor = AutoProcessor.from_pretrained(path)
     model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -62,8 +65,16 @@ def infer(model, processor, request: PageReviewRequest) -> PageFindings:
     if input_length > 8192:
         raise ValueError("Page exceeds 8192 input tokens")
     # 기울기 계산을 끄고 추론만 수행한다. 생성은 한 번이며 재검증 호출은 없다.
-    with torch.inference_mode():
-        tokens = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
-    # generate 결과에는 입력 토큰도 포함되므로 입력 길이 이후의 새 응답만 디코딩한다.
-    raw = processor.batch_decode(tokens[:, input_length:], skip_special_tokens=True)[0]
-    return parse_findings(raw)
+    with span("model.generate", inputs={"model": model.config._name_or_path, "input_tokens": input_length}, run_type="llm") as run:
+        # 본문 기록은 명시적으로 켠 경우만 허용하며 이미지 바이트는 기록하지 않는다.
+        record(run, content={"prompt": prompt})
+        with torch.inference_mode():
+            tokens = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
+        raw = processor.batch_decode(tokens[:, input_length:], skip_special_tokens=True)[0]
+        record(run, metadata={"usage_metadata": {"input_tokens": input_length,
+               "output_tokens": tokens.shape[-1] - input_length, "total_tokens": tokens.shape[-1]}},
+               content={"raw_response": raw})
+    with span("response.parse") as run:
+        result = parse_findings(raw)
+        record(run, metadata={"issue_count": len(result.issues)}, content={"review": result.model_dump()})
+        return result

@@ -2,26 +2,18 @@
 
 이 문서는 **사용자가 CLI를 실행한 뒤 실제로 호출되는 순서**에 맞춰 파일, 함수, 데이터 구조를 설명합니다. 전체 동작과 사용법은 [CLI 실행 흐름](cli-flow.md)을 참고하세요. 여기서는 `--review` 경로를 중심으로 읽고, GPU 연결 검사 경로는 별도로 설명합니다.
 
-## 1. 실행 환경 준비: Docker와 패키지 설정
+## 1. 실행 환경 준비: uv와 패키지 설정
 
-| 파일 | 역할 |
-| --- | --- |
-| [pyproject.toml](../pyproject.toml) | Python 버전, 로컬 의존성, pytest 설정, `exam-checker` 명령 정의 |
-| [uv.lock](../uv.lock) | 의존성의 구체적인 버전과 배포 파일 정보를 고정 |
-| [Dockerfile](../Dockerfile) | Python 3.12 기반 로컬 CLI 이미지 생성 |
-| [docker-compose.yml](../docker-compose.yml) | 입력·출력 폴더 연결, 환경변수 전달, CLI 실행 |
-| [docker-compose.modal.yml](../docker-compose.modal.yml) | Modal 인증 파일을 추가로 읽기 전용 연결 |
-| [.env.example](../.env.example) | DPI·GPU·앱 이름·모델 ID 설정 예시 |
+[pyproject.toml](../pyproject.toml)은 Python 버전, 의존성, pytest 설정, `exam-checker` 명령을 정의합니다. [uv.lock](../uv.lock)은 구체적인 버전을 고정합니다.
 
-`Dockerfile`은 `uv sync --frozen --no-dev --no-install-project`로 잠금 파일에 맞는 실행 의존성을 `/opt/venv`에 설치합니다. 개발용 pytest와 프로젝트 패키지 설치는 생략하고, `/app`에 복사한 코드를 모듈로 실행합니다. 가상환경을 `/app` 밖에 두므로 Compose가 프로젝트 폴더를 `/app`에 연결해도 설치한 의존성이 가려지지 않습니다.
-
-컨테이너 진입점은 다음과 같습니다.
-
-```text
-python -m exam_checker.cli
+```bash
+uv sync --frozen
+uv run exam-checker data/sample.pdf --review
 ```
 
-호스트에서 `uv sync`로 프로젝트를 설치한 경우에는 `pyproject.toml`의 `[project.scripts]` 설정에 따라 `exam-checker` 명령이 같은 `cli.app`을 실행합니다. 로컬 의존성에는 PyTorch나 Transformers가 없으며, 이 라이브러리는 뒤에서 설명할 Modal 이미지에만 설치합니다.
+`uv run`이 가상환경에서 `exam_checker.cli:app`을 실행합니다. `python -m exam_checker.cli`도 같은 앱을 호출합니다. 로컬 의존성에는 PyMuPDF, Typer, Pydantic, Modal SDK, LangSmith, python-dotenv가 포함되며 PyTorch와 Transformers는 Modal 이미지에만 설치합니다.
+
+[.env.example](../.env.example)은 실행 설정 예시입니다. API 키를 가진 `.env`는 버전 관리에서 제외됩니다.
 
 ## 2. 진입점: `cli.py`의 `app`과 `main()`
 
@@ -31,6 +23,7 @@ python -m exam_checker.cli
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
 @app.command()
+@traced("exam_checker.run", root=True)
 def main(...):
     ...
 
@@ -42,7 +35,7 @@ if __name__ == "__main__":
 
 `Annotated[Path, typer.Argument(...)]`는 필수 PDF 경로를, `typer.Option(...)`은 `--dpi`, `--review` 등의 옵션을 정의합니다. `Path`는 파일 경로 객체이며 이 타입으로 변환됐다는 사실만으로 파일 존재가 보장되지는 않습니다. 실제 PDF 검증은 뒤의 `open_pdf()`가 수행합니다.
 
-`main()`의 첫 작업은 다음과 같습니다.
+`@traced` 래퍼가 `.env`를 읽고 루트 trace를 시작한 뒤 `main()`을 실행합니다. 종료 시 LangSmith 전송을 flush합니다. `main()`의 첫 작업은 다음과 같습니다.
 
 1. `--verbose`에 따라 로그 수준을 정합니다.
 2. 함께 사용할 수 없는 옵션을 거부합니다. 예를 들어 `--review`와 `--modal-check`는 동시에 사용할 수 없습니다.
@@ -151,10 +144,10 @@ main()
 
 ```python
 reviewer = modal.Cls.from_name(app_name, "PageReviewer")(model_id=model)
-raw = reviewer.review.remote(request.model_dump())
+raw = reviewer.review.remote(request.model_dump(), trace_headers=trace_headers)
 ```
 
-`from_name()`은 이미 배포된 클래스를 찾습니다. 여기서 로컬에 Qwen 모델을 생성하는 것이 아닙니다. `model_id`는 원격 클래스의 파라미터이며, `.remote()`가 데이터를 보내고 원격 결과를 기다립니다. PDF 파일 경로 자체가 아니라 텍스트와 PNG 바이트를 보냅니다.
+`from_name()`은 이미 배포된 클래스를 찾습니다. 여기서 로컬에 Qwen 모델을 생성하는 것이 아닙니다. `model_id`는 원격 클래스의 파라미터이며, `.remote()`가 데이터를 보내고 원격 결과를 기다립니다. 추적이 켜진 경우 부모 trace 헤더도 별도 인자로 보내며 API 키는 포함하지 않습니다. PDF 파일 경로 자체가 아니라 텍스트와 PNG 바이트를 보냅니다.
 
 `PageReviewRequest`는 페이지 번호, 최대 30,000자의 텍스트, 선택적인 PNG 바이트를 정의합니다. PNG는 최대 20,000,000바이트입니다. 공통 부모 `StrictModel`의 `extra="forbid"`는 정의하지 않은 필드를 거부하고 `strict=True`는 암묵적 타입 변환을 엄격히 제한합니다.
 
@@ -175,7 +168,7 @@ raw = reviewer.review.remote(request.model_dump())
 
 `add_local_python_source()`는 의존성 설치와 환경변수 설정 뒤에 적용됩니다. 이 순서를 뒤집으면 Modal 이미지 빌드가 실패할 수 있습니다.
 
-`PageReviewer.model_id`는 `modal.parameter()`로 정의되어 원격 클래스 생성 시 전달받습니다. `load()`는 `@modal.enter()`가 붙어 **새 컨테이너에서 한 번**, `review()`는 `@modal.method()`가 붙어 **각 요청마다** 실행됩니다.
+`PageReviewer.model_id`는 `modal.parameter()`로 정의되어 원격 클래스 생성 시 전달받습니다. `load()`는 `@modal.enter()`가 붙어 **새 컨테이너에서 한 번**, `review()`는 `@modal.method()`가 붙어 **각 요청마다** 실행됩니다. `@remote_traced`가 부모 trace 헤더를 복원하여 로컬 실행 아래에 연결하고 요청 종료 전에 전송을 flush합니다.
 
 ## 9. 최초 모델 로딩: `load()` → `load_model()`
 
@@ -297,12 +290,12 @@ main()
 
 테스트는 `pytest.fixture`로 임시 파일과 예시 응답을 만들고, `Mock`과 `monkeypatch`로 원격 호출을 대체합니다. `CliRunner`는 실제 터미널 프로세스를 새로 띄우지 않고 Typer 명령을 실행하여 출력과 종료 코드를 확인합니다. 따라서 로컬 테스트 통과만으로 실제 GPU 실행이나 모델 판정 품질이 검증되지는 않습니다.
 
-각 패키지의 `__init__.py`는 패키지 설명을 담고 있으며 별도 실행 로직이 없습니다. `.gitignore`와 `.dockerignore`는 의존성 폴더, 데이터, 인증 파일 등이 소스 관리나 이미지 빌드에 섞이지 않도록 제외 대상을 정의합니다.
+각 패키지의 `__init__.py`는 패키지 설명을 담고 있으며 별도 실행 로직이 없습니다. `.gitignore`는 의존성 폴더, 데이터, 인증 파일의 버전 관리 제외 대상을 정의합니다.
 
 ## 코드 읽기 순서 요약
 
 ```text
-Dockerfile / Compose / pyproject.toml
+uv / pyproject.toml / .env
   → cli.py: main()
   → config.py: Settings.from_env()
   → pipeline.py: process_pdf()
@@ -319,3 +312,12 @@ Dockerfile / Compose / pyproject.toml
   → contextmanager 정리
   → 종료
 ```
+
+
+## LangSmith 추적을 담당하는 코드
+
+[tracing.py](../exam_checker/tracing.py)의 `load_environment()`는 현재 디렉터리의 `.env`를 읽습니다. `enabled()`는 추적 설정과 API 키가 모두 있을 때만 활성화합니다. `span()`은 단계별 실행 시간을 기록하고 오류는 타입만 남깁니다. `record()`는 명시적으로 선택한 메타데이터를 기록하며, 본문 기록이 켜진 경우에만 텍스트·프롬프트·모델 응답도 저장합니다.
+
+`traced()`는 일반 함수를 감싸며 `root=True`이면 환경변수 로딩과 종료 전 flush를 수행합니다. `headers()`는 현재 RunTree의 분산 추적 헤더를 생성하고 `remote_traced()`는 Modal에서 이를 부모로 복원합니다. 원격 호출에 헤더가 없으면 요청 추적을 비활성화합니다. 모델 초기 로딩은 부모 요청이 없으므로 별도 trace입니다.
+
+[configure_tracing.py](../scripts/configure_tracing.py)는 선택한 LangSmith 설정을 Modal Secret에 생성·갱신합니다. [test_tracing.py](../tests/test_tracing.py)는 실제 SDK RunTree와 모의 클라이언트로 부모 연결, 본문 기록 제어, 오류 가림과 전송 실패 처리를 검사합니다. 설정 방법은 [LangSmith 문서](langsmith.md)를 참고하세요.
