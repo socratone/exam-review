@@ -38,9 +38,9 @@ if __name__ == "__main__":
 `@traced` 래퍼가 `.env`를 읽고 루트 trace를 시작한 뒤 `main()`을 실행합니다. 종료 시 LangSmith 전송을 flush합니다. `main()`의 첫 작업은 다음과 같습니다.
 
 1. `--verbose`에 따라 로그 수준을 정합니다.
-2. 함께 사용할 수 없는 옵션을 거부합니다. 예를 들어 `--review`와 `--modal-check`는 동시에 사용할 수 없습니다.
-3. 모드에 맞는 기본 JSON 경로를 계산합니다. `--output`이 있으면 해당 경로를 그대로 사용합니다.
-4. 출력 경로가 입력 PDF를 덮어쓰는 경로인지 확인합니다.
+2. `_destination()`에서 함께 사용할 수 없는 옵션을 거부합니다. 예를 들어 `--review`와 `--modal-check`는 동시에 사용할 수 없습니다.
+3. `_destination()`에서 모드에 맞는 기본 JSON 경로를 계산합니다. `--output`이 있으면 해당 경로를 그대로 사용합니다.
+4. `_destination()`에서 출력 경로가 입력 PDF를 덮어쓰는 경로인지 확인합니다.
 5. `Settings.from_env(dpi)`로 설정을 읽습니다.
 
 옵션 조합 오류는 `typer.BadParameter`로 전달되어 종료 코드 2가 됩니다. 이후 PDF 처리·클라우드 호출·저장 과정은 `try` 블록 안에서 실행됩니다.
@@ -123,11 +123,11 @@ main()
 
 파일: [exam_checker/cli.py](../exam_checker/cli.py)
 
-`main()`은 페이지 수, 페이지별 텍스트 길이, 렌더링 수, 시각 검토 대상 수를 출력합니다. 시험지 본문을 터미널에 출력하지는 않습니다.
+`main()`은 `_show_pages()`로 페이지 수, 페이지별 텍스트 길이, 렌더링 수, 시각 검토 대상 수를 출력합니다. 시험지 본문을 터미널에 출력하지는 않습니다.
 
 - 원격 옵션이 없으면 `with` 블록을 끝내고 정리·종료합니다.
-- `--modal-check`이면 `check_gpu(pages[0])`를 호출합니다.
-- `--review`이면 모델 ID를 선택하고 `review_page(pages[0], model_id, text_only=...)`를 호출합니다.
+- `--modal-check`이면 `_run_gpu_check()`에서 `check_gpu(pages[0])`를 호출합니다.
+- `--review`이면 `_run_review()`에서 모델 ID를 선택하고 `review_page(pages[0], model_id, text_only=...)`를 호출합니다.
 
 두 원격 분기 모두 `pages[0]`을 사용합니다. 전처리한 나머지 페이지를 자동으로 검토하지 않습니다.
 
@@ -238,9 +238,9 @@ raw = reviewer.review.remote(request.model_dump(), trace_headers=trace_headers)
 2. 원격 응답의 오류 코드를 확인하고 해당 오류 안내를 만듭니다.
 3. 성공 응답을 `PageReviewResult.model_validate()`로 다시 검증합니다.
 4. 페이지 번호, 모델 ID, 이미지 사용 여부가 실제 요청과 일치하는지 확인합니다.
-5. 검증된 객체를 `main()`에 반환합니다.
+5. 검증된 객체를 `_run_review()`에 반환합니다.
 
-`main()`은 출력 폴더를 만들고 `result.model_dump_json(indent=2)`로 직렬화한 문자열을 UTF-8 파일에 씁니다. `--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 같은 경로의 파일은 덮어쓰며 원자적 교체 방식은 아닙니다.
+`_save_report()`는 출력 폴더를 만들고 `result.model_dump_json(indent=2)`로 직렬화한 문자열을 UTF-8 파일에 씁니다. `--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 같은 경로의 파일은 덮어쓰며 원자적 교체 방식은 아닙니다.
 
 서버와 클라이언트의 이중 검증은 잘못된 형식이나 요청과 다른 결과를 거르는 역할입니다. 모델이 시험 문제를 올바르게 풀었는지 판정하는 독립 검토는 아닙니다.
 
