@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from exam_checker.tracing import traced, span, record
 from exam_checker.config import Settings
 from exam_checker.cloud.modal_client import CloudError, check_gpu, review_page
-from exam_checker.cloud.review_schema import DEFAULT_MODEL
+from exam_checker.cloud.review_schema import DEFAULT_MODEL, DocumentReviewResult
 from exam_checker.pdf.extractor import PDFError
 from exam_checker.pdf.pipeline import PageData, process_pdf
 
@@ -70,12 +70,17 @@ def _run_gpu_check(page: PageData, destination: Path) -> None:
     typer.echo(f"Connection check JSON (not an exam review): {destination}")
 
 
-def _run_review(page: PageData, destination: Path, model: str | None, text_only: bool) -> None:
+def _run_review(pages: list[PageData], destination: Path, model: str | None, text_only: bool) -> None:
     model_id = model or os.getenv("EXAM_CHECKER_MODEL", DEFAULT_MODEL)
-    typer.echo(f"Reviewing first page on Modal: {model_id} (initial download may take several minutes)...")
-    result = review_page(page, model_id, text_only=text_only)
+    typer.echo(f"Reviewing {len(pages)} pages on Modal: {model_id} (initial download may take several minutes)...")
+    results = []
+    for page in pages:
+        typer.echo(f"Reviewing page {page.page_number}/{len(pages)}...")
+        results.append(review_page(page, model_id, text_only=text_only))
+    result = DocumentReviewResult(page_count=len(pages), pages=results)
     _save_report(result, destination)
-    typer.echo(f"First-page review complete: {len(result.review.issues)} suspected issues (not independently verified).")
+    issue_count = sum(len(page.review.issues) for page in results)
+    typer.echo(f"Review complete: {issue_count} suspected issues across {len(pages)} pages (not independently verified).")
     typer.echo(f"Review JSON: {destination}")
 
 
@@ -87,7 +92,7 @@ def main(
     dpi: Annotated[int | None, typer.Option(min=72, max=300, help="Render DPI; overrides EXAM_CHECKER_RENDER_DPI.")] = None,
     verbose: Annotated[bool, typer.Option(help="Show per-page processing logs.")] = False,
     modal_check: Annotated[bool, typer.Option(help="Send the first page to Modal for a CUDA connection check (no AI review).")] = False,
-    review: Annotated[bool, typer.Option(help="Review the first page with Qwen on Modal (unverified AI findings).")] = False,
+    review: Annotated[bool, typer.Option(help="Review every page with Qwen on Modal (unverified AI findings).")] = False,
     model: Annotated[str | None, typer.Option(help="Qwen3-VL checkpoint override; requires --review.")] = None,
     text_only: Annotated[bool, typer.Option(help="Send only native text for --review.")] = False,
     output: Annotated[Path | None, typer.Option(help="JSON destination for --modal-check or --review.")] = None,
@@ -104,11 +109,11 @@ def main(
             _show_pages(pages, settings.render_dpi)
             if keep_files:
                 typer.echo(f"Saved page text and images: {_keep_pages(pages, pdf_path)}")
-            # 공통 전처리는 전체 페이지지만, 원격 호출은 첫 페이지(pages[0])만 사용한다.
+            # GPU 연결 확인은 첫 페이지로 수행하고, AI 검토는 모든 페이지를 각각 전송한다.
             if modal_check:
                 _run_gpu_check(pages[0], destination)
             if review:
-                _run_review(pages[0], destination, model, text_only)
+                _run_review(pages, destination, model, text_only)
         typer.echo("Temporary images cleaned up. Local preprocessing complete.")
     # 전처리·원격 호출에서 예외가 발생해도 with의 정리를 거친 뒤 여기서 안내한다.
     except ValidationError:

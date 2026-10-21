@@ -49,7 +49,7 @@ def check_gpu(page: PageData) -> GPUProbeResult:
     return result
 
 
-# 첫 페이지의 텍스트·선택적 이미지를 보내고, 검증된 AI 결과 또는 CloudError를 반환한다.
+# 한 페이지의 텍스트·선택적 이미지를 보내고, 검증된 AI 결과 또는 CloudError를 반환한다.
 @traced("modal.review")
 def review_page(page: PageData, model: str, text_only: bool = False):
     from exam_checker.cloud.review_schema import PageReviewRequest, PageReviewResult

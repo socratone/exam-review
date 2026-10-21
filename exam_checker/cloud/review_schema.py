@@ -1,4 +1,4 @@
-"""Single-page, unverified AI review contracts."""
+"""Per-page, unverified AI review contracts and document report."""
 import re
 from typing import Literal
 
@@ -44,11 +44,19 @@ class PageFindings(StrictModel):
 # 실제 호출의 모델·페이지·이미지 사용 여부와 검토 내용을 묶어 로컬에 반환한다.
 class PageReviewResult(StrictModel):
     kind: Literal["unverified_page_review"] = "unverified_page_review"
-    scope: Literal["first_page_only"] = "first_page_only"
+    scope: Literal["single_page"] = "single_page"
     model: str
     page_number: int = Field(ge=1)
     image_used: bool
     review: PageFindings
+
+
+# 전체 시험지의 페이지별 AI 검토 결과를 로컬 보고서로 묶는다.
+class DocumentReviewResult(StrictModel):
+    kind: Literal["unverified_document_review"] = "unverified_document_review"
+    scope: Literal["all_pages"] = "all_pages"
+    page_count: int = Field(ge=1)
+    pages: list[PageReviewResult] = Field(min_length=1)
 
 
 # 응답 전체가 JSON 또는 하나의 JSON 코드 블록인 경우만 허용하고 내용을 스키마로 검사한다.

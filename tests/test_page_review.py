@@ -16,7 +16,7 @@ from exam_checker.pdf.pipeline import PageData
 # 스키마 검증에 사용할 최소한의 정상 AI 검토 내용이다.
 @pytest.fixture
 def findings():
-    return {"summary": "검토 완료", "issues": [], "limitations": ["첫 페이지만 검토함"]}
+    return {"summary": "검토 완료", "issues": [], "limitations": ["독립 검증이 필요함"]}
 
 
 # 원격 전송 경로를 검사할 테스트 데이터다. 모델이나 GPU를 실행하지 않는다.
@@ -94,25 +94,75 @@ def test_empty_text_only(page):
 def test_cli_review_and_cleanup(tmp_path, findings, monkeypatch, fail):
     pdf = tmp_path / "sample.pdf"
     with pymupdf.open() as doc:
-        doc.new_page()
+        for number in range(1, 4):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Question on page {number}")
         doc.save(pdf)
-    images = []
+    seen = []
 
     def fake_review(page, model, text_only):
         assert page.image_path.exists()
-        images.append(page.image_path)
-        if fail:
+        assert page.image_path.read_bytes().startswith(b"\x89PNG")
+        assert not text_only
+        seen.append((page.page_number, page.image_path))
+        if fail and page.page_number == 2:
             raise CloudError("Failed review")
-        return PageReviewResult(model=model, page_number=1, image_used=True, review=findings)
+        return PageReviewResult(model=model, page_number=page.page_number, image_used=True, review=findings)
 
     monkeypatch.setattr("exam_checker.cli.review_page", fake_review)
     output = tmp_path / "report.json"
     result = CliRunner().invoke(app, [str(pdf), "--review", "--output", str(output)])
     assert result.exit_code == (1 if fail else 0), result.output
-    assert not images[0].exists()
+    assert [number for number, _ in seen] == ([1, 2] if fail else [1, 2, 3])
+    assert all(not image.exists() for _, image in seen)
+    assert all(not image.parent.exists() for _, image in seen)
     assert output.exists() is not fail
     if not fail:
-        assert json.loads(output.read_text())["scope"] == "first_page_only"
+        report = json.loads(output.read_text())
+        assert report["kind"] == "unverified_document_review"
+        assert report["scope"] == "all_pages"
+        assert report["page_count"] == 3
+        assert [page["page_number"] for page in report["pages"]] == [1, 2, 3]
+        assert all(page["scope"] == "single_page" and page["image_used"] for page in report["pages"])
+
+
+# CLI부터 Modal 요청까지 각 페이지의 PNG가 전달되는지 확인한다.
+@pytest.mark.parametrize("text_only", [False, True])
+def test_cli_sends_each_page_to_modal(tmp_path, findings, monkeypatch, text_only):
+    pdf = tmp_path / "sample.pdf"
+    with pymupdf.open() as doc:
+        for number in range(1, 4):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Page {number} question")
+        doc.save(pdf)
+
+    requests = []
+
+    def fake_remote(payload, **kwargs):
+        requests.append(payload)
+        number = payload["page_number"]
+        result = PageReviewResult(model=DEFAULT_MODEL, page_number=number,
+                                  image_used=not text_only, review=findings)
+        return {"result": result.model_dump()}
+
+    instance = Mock()
+    instance.review.remote.side_effect = fake_remote
+    monkeypatch.setattr(modal.Cls, "from_name", Mock(return_value=Mock(return_value=instance)))
+    output = tmp_path / "report.json"
+    args = [str(pdf), "--review", "--output", str(output)]
+    if text_only:
+        args.append("--text-only")
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert [request["page_number"] for request in requests] == [1, 2, 3]
+    if text_only:
+        assert all(request["image_png"] is None for request in requests)
+    else:
+        images = [request["image_png"] for request in requests]
+        assert all(image.startswith(b"\x89PNG") for image in images)
+        assert len(set(images)) == 3
+    assert [page["image_used"] for page in json.loads(output.read_text())["pages"]] == [not text_only] * 3
 
 
 # 의미가 맞지 않는 옵션 조합을 원격 호출 전에 사용법 오류로 처리하는지 확인한다.

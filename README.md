@@ -1,6 +1,6 @@
 # Exam Checker
 
-시험지 PDF를 로컬 CPU에서 전처리하고, 첫 페이지를 Modal GPU의 Qwen으로 검토하는 Python CLI입니다. LangSmith로 처리 단계와 모델 입출력을 추적할 수 있습니다.
+시험지 PDF를 로컬 CPU에서 전처리하고, 모든 페이지를 Modal GPU의 Qwen으로 각각 검토하는 Python CLI입니다. LangSmith로 처리 단계와 모델 입출력을 추적할 수 있습니다.
 
 [CLI 실행 흐름과 Mermaid 차트](docs/cli-flow.md) · [실행 순서로 읽는 코드](docs/code-walkthrough.md) · [LangSmith 설정과 디버깅](docs/langsmith.md)
 
@@ -30,6 +30,8 @@ uv run modal token new
 uv run modal deploy -m modal_app.app
 ```
 
+검토 범위와 결과 스키마가 바뀌었으므로 기존에 배포한 앱도 위 배포 명령으로 갱신해야 합니다.
+
 `.env`의 `EXAM_CHECKER_GPU`는 배포 시 적용됩니다. 기본은 L4입니다. `EXAM_CHECKER_MODAL_APP`은 배포와 호출에 같은 값을 사용하며 기본은 `exam-checker`입니다. GPU 연산과 모델 캐시 Volume에는 Modal 요금이 적용됩니다.
 
 ```bash
@@ -37,11 +39,11 @@ uv run modal deploy -m modal_app.app
 uv run exam-checker data/sample.pdf --modal-check \
   --output output/sample.gpu-check.json
 
-# 첫 페이지 텍스트 + PNG로 AI 검토
+# 모든 페이지의 텍스트 + 각 페이지 PNG로 AI 검토
 uv run exam-checker data/sample.pdf --review \
   --output output/sample.page-review.json
 
-# 첫 페이지 텍스트만 전송
+# 모든 페이지의 텍스트만 전송
 uv run exam-checker data/sample.pdf --review --text-only \
   --output output/sample.text-review.json
 ```
@@ -76,11 +78,11 @@ LangSmith의 `exam-checker` 프로젝트에서 `exam_checker.run`을 열면 로�
 
 `--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 생략하면 `output/<이름>.page-review.json` 또는 `output/<이름>.gpu-check.json`에 저장합니다. 같은 파일은 성공 시 덮어쓰며, 추론 실패 시 이전 파일이 남을 수 있습니다. 파일 쓰기는 원자적 교체 방식이 아닙니다.
 
-- 모든 페이지를 전처리하지만 AI는 **첫 페이지만** 검토합니다.
-- 결과는 `unverified_page_review`, 각 의심 항목의 `verified`는 `null`입니다.
-- 문항 분할·정답 키 검증·독립 재검증·전체 시험지 검토·Markdown 보고서는 지원하지 않습니다.
+- AI는 모든 페이지를 각각 검토합니다. 기본 모드에서는 매 요청에 해당 페이지의 PNG와 텍스트를 함께 보냅니다. `--text-only`를 지정하면 모든 요청에서 이미지를 제외합니다.
+- 결과는 `unverified_document_review`이며 `pages`에 각 페이지의 `unverified_page_review`가 들어갑니다. 각 의심 항목의 `verified`는 `null`입니다.
+- 문항 분할·정답 키 검증·독립 재검증·페이지를 넘나드는 문항의 통합 검토·Markdown 보고서는 지원하지 않습니다.
 - 정상 샘플 `2 + 2`, 선택지 `3 / 4 / 5`에서 오탐이, 정답을 뺀 `3 / 5 / 6`에서 계산 오류와 오류 누락이 관찰됐습니다. `issues: []`나 높은 `confidence`는 정확성을 보장하지 않습니다.
-- AI 요청 한도는 텍스트 30,000자, PNG 20 MB, 입력 8,192토큰, 생성 2,048토큰입니다. 이미지는 긴 변 최대 1,280픽셀로 축소하므로 작은 글씨를 놓칠 수 있습니다.
+- AI 요청 한도는 페이지마다 텍스트 30,000자, PNG 20 MB, 입력 8,192토큰, 생성 2,048토큰입니다. 이미지는 긴 변 최대 1,280픽셀로 축소하므로 작은 글씨를 놓칠 수 있습니다.
 
 ## 테스트와 로그
 

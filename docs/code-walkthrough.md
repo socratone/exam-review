@@ -127,9 +127,9 @@ main()
 
 - 원격 옵션이 없으면 `with` 블록을 끝내고 정리·종료합니다.
 - `--modal-check`이면 `_run_gpu_check()`에서 `check_gpu(pages[0])`를 호출합니다.
-- `--review`이면 `_run_review()`에서 모델 ID를 선택하고 `review_page(pages[0], model_id, text_only=...)`를 호출합니다.
+- `--review`이면 `_run_review()`에서 모델 ID를 선택하고 모든 페이지에 대해 `review_page(page, model_id, text_only=...)`를 호출합니다.
 
-두 원격 분기 모두 `pages[0]`을 사용합니다. 전처리한 나머지 페이지를 자동으로 검토하지 않습니다.
+GPU 연결 검사는 첫 페이지에만 수행합니다. AI 검토는 페이지마다 별도 요청을 보내며 기본 모드에서는 해당 페이지의 PNG를 함께 전송합니다.
 
 ## 7. AI 요청 만들기: `review_page()`와 요청 스키마
 
@@ -137,7 +137,7 @@ main()
 
 `review_page()`가 로컬 전처리와 클라우드 추론 사이를 연결합니다.
 
-1. 텍스트 전용 모드인데 첫 페이지 텍스트가 비어 있으면 `CloudError`를 발생시킵니다.
+1. 텍스트 전용 모드인데 해당 페이지 텍스트가 비어 있으면 `CloudError`를 발생시킵니다.
 2. `PageReviewRequest`를 생성합니다. 이미지 포함 모드에서는 `image_path.read_bytes()`로 PNG를 읽습니다.
 3. 요청을 `model_dump()`로 Python 딕셔너리로 바꿉니다.
 4. Modal SDK로 원격 메서드를 호출합니다.
@@ -217,14 +217,15 @@ raw = reviewer.review.remote(request.model_dump(), trace_headers=trace_headers)
 | --- | --- |
 | `Finding` | 의심 항목 한 개: 문항 번호, 유형, 심각도, 설명, 근거, 제안, 신뢰도 |
 | `PageFindings` | 모델이 작성할 내용: 요약, 최대 30개의 의심 항목, 한계 목록 |
-| `PageReviewResult` | 코드가 붙이는 실행 정보와 `PageFindings`를 묶은 최종 결과 |
+| `PageReviewResult` | 코드가 붙이는 실행 정보와 `PageFindings`를 묶은 페이지 결과 |
+| `DocumentReviewResult` | 모든 페이지의 결과를 담은 최종 보고서 |
 | `parse_findings()` | 모델 응답 문자열을 `PageFindings`로 변환 |
 
 `parse_findings()`는 양끝 공백을 제거하고, 응답 전체가 하나의 JSON 코드 블록이면 바깥 코드 블록만 벗깁니다. 이어서 `model_validate_json()`을 호출합니다. 설명 문장 속에서 JSON 일부를 찾아 추출하거나 잘못된 JSON을 임의로 고치지는 않습니다.
 
 `Finding.confidence`는 0–1 범위이며 `verified`는 `None`만 허용합니다. 모델이 독립 검증을 받지 않았는데 `verified: true`라고 주장하면 스키마 검증에 실패합니다. 다만 올바른 형식으로 잘못된 근거·계산을 내놓는 것은 이 스키마로 검출할 수 없습니다.
 
-`review()`는 성공한 `PageFindings`에 실제 모델 ID, 페이지 번호, 이미지 사용 여부를 붙여 `PageReviewResult`를 생성합니다. `kind`는 `unverified_page_review`, `scope`는 `first_page_only`입니다. 모델에게 이 실행 정보를 추측하게 하지 않고 코드에서 지정합니다.
+`review()`는 성공한 `PageFindings`에 실제 모델 ID, 페이지 번호, 이미지 사용 여부를 붙여 `PageReviewResult`를 생성합니다. `kind`는 `unverified_page_review`, `scope`는 `single_page`입니다. 모델에게 이 실행 정보를 추측하게 하지 않고 코드에서 지정합니다.
 
 성공 시 `{"result": ...}`, 실패 시 `{"error": ...}` 형태로 반환합니다. 오류 코드는 `GPU_OOM`, `INVALID_JSON`, `INVALID_INPUT`, `INFERENCE_FAILED`이며, 모델 로딩 오류는 `load()`에서 별도 예외가 됩니다.
 
@@ -240,7 +241,7 @@ raw = reviewer.review.remote(request.model_dump(), trace_headers=trace_headers)
 4. 페이지 번호, 모델 ID, 이미지 사용 여부가 실제 요청과 일치하는지 확인합니다.
 5. 검증된 객체를 `_run_review()`에 반환합니다.
 
-`_save_report()`는 출력 폴더를 만들고 `result.model_dump_json(indent=2)`로 직렬화한 문자열을 UTF-8 파일에 씁니다. `--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 같은 경로의 파일은 덮어쓰며 원자적 교체 방식은 아닙니다.
+`_run_review()`는 모든 페이지의 결과를 `DocumentReviewResult`로 묶습니다. `_save_report()`는 출력 폴더를 만들고 `result.model_dump_json(indent=2)`로 직렬화한 문자열을 UTF-8 파일에 씁니다. `--output`은 정확한 파일 경로이며 확장자를 자동 보정하지 않습니다. 같은 경로의 파일은 덮어쓰며 원자적 교체 방식은 아닙니다.
 
 서버와 클라이언트의 이중 검증은 잘못된 형식이나 요청과 다른 결과를 거르는 역할입니다. 모델이 시험 문제를 올바르게 풀었는지 판정하는 독립 검토는 아닙니다.
 

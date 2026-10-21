@@ -2,7 +2,7 @@
 
 파일과 함수 단위의 상세 설명은 [실행 순서로 읽는 코드](code-walkthrough.md)를 참고하세요.
 
-이 문서는 현재 구현을 기준으로 CLI 실행부터 결과 저장과 종료까지 설명합니다. **모든 페이지를 로컬에서 전처리하지만, 클라우드로 보내 검토하는 것은 첫 페이지뿐입니다.**
+이 문서는 현재 구현을 기준으로 CLI 실행부터 결과 저장과 종료까지 설명합니다. 모든 페이지를 로컬에서 전처리하고, `--review`에서는 각 페이지를 클라우드로 보내 검토합니다.
 
 ## 1. 실행 방법과 모드
 
@@ -12,14 +12,14 @@
 | --- | --- | --- | --- |
 | PDF 전처리 확인 | 없음 | 없음 | 터미널 요약만 출력 |
 | GPU 연결 확인 | `--modal-check` | PNG 확인 및 CUDA 연산 `2² = 4` | GPU 연결 검사 JSON |
-| 이미지 포함 AI 검토 | `--review` | 첫 페이지 텍스트·이미지로 Qwen 추론 | 미검증 페이지 검토 JSON |
-| 텍스트 전용 AI 검토 | `--review --text-only` | 첫 페이지 텍스트로 Qwen 추론 | 미검증 페이지 검토 JSON |
+| 이미지 포함 AI 검토 | `--review` | 모든 페이지의 텍스트·해당 이미지로 Qwen 추론 | 미검증 문서 검토 JSON |
+| 텍스트 전용 AI 검토 | `--review --text-only` | 모든 페이지의 텍스트로 Qwen 추론 | 미검증 문서 검토 JSON |
 
 ```bash
 # 로컬 전처리만 실행
 uv run exam-checker data/sample.pdf
 
-# Modal에서 첫 페이지 검토
+# Modal에서 모든 페이지 검토
 uv run exam-checker data/sample.pdf --review \
   --output output/sample.page-review.json
 ```
@@ -41,7 +41,7 @@ flowchart TD
     Summary --> Mode{"실행 모드"}
     Mode -->|"기본"| Cleanup["임시 PNG 삭제 + PDF 닫기"]
     Mode -->|"--modal-check"| Probe["첫 페이지 텍스트·PNG 전송"]
-    Mode -->|"--review"| Payload["첫 페이지 텍스트 + 선택적 PNG 전송"]
+    Mode -->|"--review"| Payload["각 페이지의 텍스트 + 선택적 PNG 전송"]
 
     subgraph Cloud["Modal 클라우드"]
         Probe --> GPU["gpu_probe: CUDA 연산 + 메타데이터 반환"]
@@ -119,35 +119,37 @@ sequenceDiagram
 
     User->>CLI: PDF 경로 + --review
     CLI->>CLI: 모든 페이지 로컬 전처리
-    CLI->>CLI: 첫 페이지 요청 검증
-    CLI->>Worker: review.remote(텍스트, 선택적 PNG, 추적 헤더)
-    opt 새 GPU 컨테이너 시작
-        Worker->>Cache: 모델 파일 확인
-        alt 캐시 미스
-            Worker->>HF: 모델 다운로드
-            HF-->>Cache: 가중치·설정·tokenizer
-            Worker->>Cache: 캐시 commit
-        else 캐시 적중
-            Cache-->>Worker: 기존 모델 파일 재사용
+    loop 각 페이지
+        CLI->>CLI: 해당 페이지 요청 검증
+        CLI->>Worker: review.remote(텍스트, 선택적 PNG, 추적 헤더)
+        opt 새 GPU 컨테이너 시작
+            Worker->>Cache: 모델 파일 확인
+            alt 캐시 미스
+                Worker->>HF: 모델 다운로드
+                HF-->>Cache: 가중치·설정·tokenizer
+                Worker->>Cache: 캐시 commit
+            else 캐시 적중
+                Cache-->>Worker: 기존 모델 파일 재사용
+            end
+            Worker->>GPU: processor 및 모델 로딩
         end
-        Worker->>GPU: processor 및 모델 로딩
+        Worker->>Worker: 요청 스키마 검증·PNG 축소·프롬프트 구성
+        Worker->>GPU: 입력 토큰화 및 추론
+        GPU-->>Worker: 생성된 응답 문자열
+        Worker->>Worker: JSON 파싱·PageFindings 검증
+        Worker-->>CLI: PageReviewResult 또는 오류 코드
+        CLI->>CLI: 응답 스키마·페이지·모델·이미지 사용 여부 확인
     end
-    Worker->>Worker: 요청 스키마 검증·PNG 축소·프롬프트 구성
-    Worker->>GPU: 입력 토큰화 및 추론
-    GPU-->>Worker: 생성된 응답 문자열
-    Worker->>Worker: JSON 파싱·PageFindings 검증
-    Worker-->>CLI: PageReviewResult 또는 오류 코드
-    CLI->>CLI: 응답 스키마·페이지·모델·이미지 사용 여부 확인
-    CLI->>CLI: 성공한 결과 JSON 저장
+    CLI->>CLI: 모든 페이지 결과를 묶어 JSON 저장
     CLI->>CLI: 임시 PNG 삭제·PDF 닫기
     CLI-->>User: 출력 경로 및 종료 코드
 ```
 
 차트의 결과 저장 경로는 성공한 경우입니다. 입력 또는 모델 응답 검증이 실패하면 결과를 저장하는 대신 오류 종료합니다.
 
-### 첫 페이지 요청 생성
+### 페이지별 요청 생성
 
-`review_page()`는 `pages[0]`의 텍스트를 사용합니다. 기본 AI 검토에서는 PNG 파일의 바이트도 읽어 보냅니다. `--text-only`에서는 `image_png`를 `None`으로 보내며, 추출된 텍스트가 비어 있으면 호출 전에 실패합니다. 원본 PDF와 나머지 페이지는 보내지 않습니다.
+`_run_review()`는 모든 페이지에 대해 `review_page()`를 호출합니다. 기본 AI 검토에서는 각 페이지의 텍스트와 해당 PNG 파일의 바이트를 함께 보냅니다. `--text-only`에서는 모든 요청의 `image_png`를 `None`으로 보내며, 추출된 텍스트가 비어 있는 페이지에서 호출 전에 실패합니다. 원본 PDF 파일은 보내지 않습니다.
 
 로컬 요청 검증 한도는 텍스트 30,000자, PNG 20,000,000바이트입니다. Modal SDK는 배포된 앱의 `PageReviewer`를 모델 ID로 생성하고 `review.remote()`를 호출합니다. CLI 실행이 자동으로 앱을 배포하지는 않습니다.
 
@@ -164,7 +166,7 @@ sequenceDiagram
 5. GPU에서 최대 2,048토큰을 생성합니다. 현재 `do_sample=False`입니다.
 6. 응답 전체를 JSON으로 파싱하고 `PageFindings` 스키마로 검증합니다. 하나의 JSON 코드 블록으로 감싼 응답도 허용하지만, 깨진 JSON을 추측해 복구하지 않습니다.
 
-현재 모델 호출은 단일 검토입니다. 잘못된 JSON을 다시 생성하게 하는 루프, 의심 항목의 독립 재검증, 전체 시험지 검토는 아직 없습니다.
+각 페이지의 모델 호출은 한 번입니다. 잘못된 JSON을 다시 생성하게 하는 루프, 의심 항목의 독립 재검증, 페이지를 넘나드는 문항의 통합 검토는 아직 없습니다.
 
 ## 5. GPU 연결 검사 모드
 
@@ -188,13 +190,14 @@ AI 검토 JSON의 주요 필드는 다음과 같습니다.
 
 | 필드 | 의미 |
 | --- | --- |
-| `kind` | `unverified_page_review`: 독립 재검증 전 결과 |
-| `scope` | `first_page_only`: 첫 페이지만 검토 |
-| `model`, `page_number`, `image_used` | 사용한 모델과 실제 요청 범위 |
-| `review.summary` | 모델이 작성한 요약 |
-| `review.issues` | 유형·심각도·설명·근거·제안·신뢰도를 포함한 의심 항목 |
-| `review.issues[].verified` | 현재 항상 `null` |
-| `review.limitations` | 모델이 보고한 자료 부족 등의 한계 |
+| `kind`, `scope` | `unverified_document_review`, `all_pages` |
+| `page_count` | 검토한 페이지 수 |
+| `pages[]` | 페이지별 `unverified_page_review` 결과 (`scope`: `single_page`) |
+| `pages[].model`, `pages[].page_number`, `pages[].image_used` | 사용한 모델과 실제 요청 범위 |
+| `pages[].review.summary` | 모델이 작성한 페이지 요약 |
+| `pages[].review.issues` | 유형·심각도·설명·근거·제안·신뢰도를 포함한 의심 항목 |
+| `pages[].review.issues[].verified` | 현재 항상 `null` |
+| `pages[].review.limitations` | 모델이 보고한 자료 부족 등의 한계 |
 
 **종료 코드 0은 처리와 저장의 성공이지 시험지가 정상이라는 뜻이 아닙니다.** Pydantic은 결과 형식과 필드 제약을 검사하며 수학적 정답이나 근거의 진위를 검증하지 않습니다. 실제 합성 샘플에서 오탐과 오류 누락이 모두 관찰됐으므로 `issues: []`나 높은 `confidence`도 정확성을 보장하지 않습니다.
 
@@ -213,7 +216,7 @@ AI 검토 JSON의 주요 필드는 다음과 같습니다.
 | 데이터 | 저장 위치와 수명 |
 | --- | --- |
 | 원본 PDF | 호스트 `data/`, CLI가 삭제하거나 수정하지 않음 |
-| 추출 텍스트 | 로컬 메모리, 첫 페이지 요청 데이터로 선택적 전송 |
+| 추출 텍스트 | 로컬 메모리, 검토 시 각 페이지의 요청 데이터로 전송 |
 | 임시 PNG | 로컬 임시 디렉터리, 컨텍스트 종료 시 삭제 |
 | 클라우드 요청 | 워커 메모리에서 처리; 앱 코드가 별도 파일·Volume으로 저장하지 않음 |
 | 모델 파일 | Modal `exam-checker-model-cache` Volume에 유지 |
