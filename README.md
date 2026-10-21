@@ -19,6 +19,8 @@ uv run exam-checker data/sample.pdf --verbose
 
 기본 실행은 모든 페이지의 텍스트 추출·임시 PNG 렌더링·요약 출력까지만 수행합니다. 기본 DPI는 160이며 `--dpi`로 72–300 범위에서 변경합니다. 임시 이미지는 처리 종료 시 정리합니다. OCR은 실행하지 않으며 문자·숫자가 20자 미만인 페이지는 시각 검토 대상으로 표시합니다.
 
+추출 텍스트와 PNG를 남기려면 `uv run exam-checker data/sample.pdf --keep-files`를 실행합니다. `output/sample.pages-<고유값>/`에 페이지별 `page-1.txt`, `page-1.png` 등이 저장되며, 실제 경로는 터미널에 출력됩니다. `--review`, `--modal-check`와 함께 사용할 수도 있습니다.
+
 ## Modal 인증과 배포
 
 최초 인증은 브라우저에서 진행하며 `~/.modal.toml`을 사용합니다. L4 GPU 사용을 위해 Modal 계정의 결제 설정이 필요할 수 있습니다.

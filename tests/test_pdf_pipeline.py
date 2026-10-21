@@ -95,6 +95,7 @@ def test_password_protected(sample, tmp_path):
 
 # CliRunner로 CLI를 호출해 환경변수 적용과 요약 출력, 본문 미출력을 확인한다.
 def test_cli_success(sample, monkeypatch):
+    monkeypatch.chdir(sample.parent)
     monkeypatch.setenv("EXAM_CHECKER_RENDER_DPI", "100")
     result = CliRunner().invoke(app, [str(sample)])
     assert result.exit_code == 0, result.output
@@ -102,6 +103,32 @@ def test_cli_success(sample, monkeypatch):
     assert "at 100 DPI" in result.output
     assert "Temporary images cleaned up" in result.output
     assert "two plus two" not in result.output
+    assert not (sample.parent / "output").exists()
+
+
+# --keep-files는 실행마다 별도 폴더에 모든 페이지의 추출 텍스트와 PNG를 남긴다.
+def test_cli_keep_files_preserves_page_text_and_images(sample, monkeypatch):
+    monkeypatch.chdir(sample.parent)
+    folders = []
+
+    for _ in range(2):
+        result = CliRunner().invoke(app, [str(sample), "--keep-files", "--dpi", "100"])
+        assert result.exit_code == 0, result.output
+        saved = list((sample.parent / "output").glob("sample.pages-*"))
+        folder = next(path for path in saved if path not in folders)
+        folders.append(folder)
+        assert str(folder.relative_to(sample.parent)) in result.output
+        assert sorted(path.name for path in folder.iterdir()) == [
+            "page-1.png", "page-1.txt", "page-2.png", "page-2.txt"
+        ]
+        assert "two plus two" in (folder / "page-1.txt").read_text(encoding="utf-8")
+        assert (folder / "page-2.txt").read_text(encoding="utf-8") == ""
+        for number in (1, 2):
+            pix = pymupdf.Pixmap(folder / f"page-{number}.png")
+            assert (pix.width, pix.height) == (200, 200)
+
+    assert folders[0] != folders[1]
+    assert all(folder.exists() for folder in folders)
 
 
 # 잘못된 환경변수는 실패하지만 명시적인 --dpi가 있으면 우선 적용되는지 확인한다.

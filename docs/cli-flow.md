@@ -26,6 +26,8 @@ uv run exam-checker data/sample.pdf --review \
 
 위 AI 검토 명령에서 `--review`를 `--modal-check`로 바꾸면 GPU 연결 검사입니다. 텍스트 전용 검토는 `--review`와 함께 `--text-only`를 추가합니다. 이 모드도 현재는 로컬에서 모든 페이지의 PNG를 생성하지만, 이미지를 클라우드에 보내지는 않습니다.
 
+`--keep-files`를 추가하면 각 페이지의 추출 텍스트와 PNG를 `output/<PDF 이름>.pages-<고유값>/`에 저장합니다. 이 옵션은 모든 실행 모드에서 사용할 수 있습니다. 저장 후에도 전처리용 임시 PNG는 정리됩니다.
+
 ## 2. 전체 흐름
 
 ```mermaid

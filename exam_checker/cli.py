@@ -1,6 +1,8 @@
 import logging
 import os
+import shutil
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Annotated
 
 import typer
@@ -42,6 +44,17 @@ def _show_pages(pages: list[PageData], dpi: int) -> None:
     typer.echo(f"Pages needing visual review: {sum(page.needs_visual_review for page in pages)}")
 
 
+def _keep_pages(pages: list[PageData], pdf_path: Path) -> Path:
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    files_dir = Path(mkdtemp(prefix=f"{pdf_path.stem}.pages-", dir=output_dir))
+    for page in pages:
+        name = f"page-{page.page_number}"
+        (files_dir / f"{name}.txt").write_text(page.text, encoding="utf-8")
+        shutil.copyfile(page.image_path, files_dir / f"{name}.png")
+    return files_dir
+
+
 def _save_report(result: BaseModel, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with span("report.write") as run:
@@ -78,6 +91,7 @@ def main(
     model: Annotated[str | None, typer.Option(help="Qwen3-VL checkpoint override; requires --review.")] = None,
     text_only: Annotated[bool, typer.Option(help="Send only native text for --review.")] = False,
     output: Annotated[Path | None, typer.Option(help="JSON destination for --modal-check or --review.")] = None,
+    keep_files: Annotated[bool, typer.Option(help="Keep extracted text and page PNGs under output/.")] = False,
 ) -> None:
     """Extract PDF text and render temporary page images locally."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s %(message)s", force=True)
@@ -88,6 +102,8 @@ def main(
         # 이 블록이 끝날 때 PNG가 삭제되므로 전송과 저장도 블록 안에서 마친다.
         with process_pdf(pdf_path, settings) as pages:
             _show_pages(pages, settings.render_dpi)
+            if keep_files:
+                typer.echo(f"Saved page text and images: {_keep_pages(pages, pdf_path)}")
             # 공통 전처리는 전체 페이지지만, 원격 호출은 첫 페이지(pages[0])만 사용한다.
             if modal_check:
                 _run_gpu_check(pages[0], destination)
