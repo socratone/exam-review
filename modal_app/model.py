@@ -69,7 +69,7 @@ def _generate_response(model, processor, inputs, prompt: str, input_length: int)
         # 본문 기록은 명시적으로 켠 경우만 허용하며 이미지 바이트는 기록하지 않는다.
         record(run, content={"prompt": prompt})
         with torch.inference_mode():
-            tokens = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
+            tokens = model.generate(**inputs, max_new_tokens=4096, do_sample=False)
         raw = processor.batch_decode(tokens[:, input_length:], skip_special_tokens=True)[0]
         record(run, metadata={"usage_metadata": {"input_tokens": input_length,
                "output_tokens": tokens.shape[-1] - input_length, "total_tokens": tokens.shape[-1]}},

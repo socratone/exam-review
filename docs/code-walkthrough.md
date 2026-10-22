@@ -203,7 +203,7 @@ raw = reviewer.review.remote(request.model_dump(), trace_headers=trace_headers)
 4. **프롬프트 구성**: `processor.apply_chat_template(..., tokenize=False)`로 모델의 대화 형식에 맞는 문자열을 만듭니다.
 5. **텐서 생성**: `processor(text=[prompt], images=..., return_tensors="pt")`로 텍스트와 이미지를 함께 처리하고 모델 장치로 옮깁니다.
 6. **입력 길이 검사**: `input_ids`가 8,192토큰을 넘으면 실패합니다.
-7. **생성**: `torch.inference_mode()` 안에서 최대 2,048토큰을 생성합니다. `do_sample=False`로 샘플링을 사용하지 않습니다.
+7. **생성**: `torch.inference_mode()` 안에서 최대 4,096토큰을 생성합니다. `do_sample=False`로 샘플링을 사용하지 않습니다.
 8. **응답 분리**: 생성 결과에서 입력 프롬프트에 해당하는 토큰을 잘라내고, 새로 생성한 토큰만 문자열로 디코딩합니다.
 9. **응답 검사**: `parse_findings(raw)`로 JSON을 검증한 뒤 `PageFindings`를 반환합니다.
 
